@@ -10,7 +10,7 @@
 * **산출물명**: VIP 대상 카지노-리조트 통합 교차판매 마케팅 대시보드
 * **한 줄 소개**: 카지노 유동 인구와 프리미엄 POS 매출 데이터를 결합하여 고마진 룸서비스 및 지역 특산품 교차 판매를 유도하는 마케팅 대시보드
 * **저장소**: https://github.com/KangwonVibeCoding/kangwonland-vip-crosssell
-* **배포 URL**: https://[앱이름].streamlit.app *(배포 완료 후 주소 입력)*
+* **배포 URL**: https://kangwonland-vip-crosssell-2vubchckkyhe8ehii6hbiu.streamlit.app
 
 ---
 
