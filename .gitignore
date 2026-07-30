@@ -1,0 +1,30 @@
+# ── 가상환경 / 파이썬 캐시 ─────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ── 민감정보: 절대 커밋 금지 ───────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── 원본·파생 데이터 ───────────────────────────────────────────────────
+data/incoming/
+data/raw/
+data/processed/
+data/**/api_cache/
+*.parquet
+
+# 단, 배포 데모에 필요한 것은 예외로 포함
+!data/sample/
+!data/sample/**
+!data/mock/
+!data/mock/**
+
+# ── OS / 에디터 ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
