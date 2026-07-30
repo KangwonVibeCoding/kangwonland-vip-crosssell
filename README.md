@@ -9,6 +9,7 @@
 * **팀명**: 안성잘부
 * **산출물명**: VIP 대상 카지노-리조트 통합 교차판매 마케팅 대시보드
 * **한 줄 소개**: 카지노 유동 인구와 프리미엄 POS 매출 데이터를 결합하여 고마진 룸서비스 및 지역 특산품 교차 판매를 유도하는 마케팅 대시보드
+* **저장소**: https://github.com/KangwonVibeCoding/kangwonland-vip-crosssell
 * **배포 URL**: https://[앱이름].streamlit.app *(배포 완료 후 주소 입력)*
 
 ---
@@ -302,8 +303,8 @@ L6 src/data/fallback.py      →  코드 내장 상수 · 파일/네트워크 �
 
 ```powershell
 # 1. 저장소 클론
-git clone https://github.com/[팀계정]/[저장소명].git
-cd [저장소명]
+git clone https://github.com/KangwonVibeCoding/kangwonland-vip-crosssell.git
+cd kangwonland-vip-crosssell
 
 # 2. 가상환경 + 의존성
 python -m venv .venv
@@ -327,10 +328,16 @@ streamlit run app.py
 ### 테스트
 
 ```powershell
-pytest tests\ -q                                    # 전체 (36개)
+pytest tests\ -q                                    # 전체 (59개)
 pytest tests\test_stats.py -q                       # 실측값 회귀만
+pytest tests\test_deploy_sample.py -q               # 배포 환경 시뮬레이션
 pytest tests\test_stats.py::test_headline_corr -v   # 단일 테스트
 ```
+
+`test_stats.py` 는 원본 CSV(`data/raw/`)가 있어야 하며, 없으면 skip 됩니다.
+`test_deploy_sample.py` 는 **`data/raw` 가 없는 상태를 흉내 내어** 커밋된 축약본만으로
+r=0.801 과 특산품 D+1 이 재현되는지 검증합니다 — 배포판이 조용히 내장 데모 데이터로
+떨어지는 사고를 막는 장치입니다.
 
 ---
 
