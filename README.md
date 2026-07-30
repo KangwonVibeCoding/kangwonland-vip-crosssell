@@ -296,6 +296,10 @@ L6 src/data/fallback.py      →  코드 내장 상수 · 파일/네트워크 �
 
 ## 💻 로컬 실행 방법
 
+> **팀원 온보딩**: 원본 CSV 는 저장소에 없지만(`.gitignore` 제외), 배포용 축약본
+> `data/sample/` 이 커밋되어 있어 **clone 후 바로 실행됩니다.** 아래 1·2·5번만 하면
+> 실데이터 기준 화면이 그대로 뜹니다. API 키(3번)와 원본 CSV(4번)는 선택입니다.
+
 ```powershell
 # 1. 저장소 클론
 git clone https://github.com/[팀계정]/[저장소명].git
