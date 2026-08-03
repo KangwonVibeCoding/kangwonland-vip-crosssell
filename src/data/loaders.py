@@ -255,8 +255,11 @@ def _load_merchants_impl() -> tuple[pd.DataFrame, str]:
     if cached is not None:
         return cached, S.SRC_PROCESSED
 
+    # 지오코딩본을 먼저 본다. merchants_api.csv 는 원본 API 응답이라 좌표가 없어
+    # 지도에 못 쓴다 — glob 알파벳 순서에 기대지 않고 우선순위를 명시한다.
     for directory, source in ((S.RAW_DIR, S.SRC_RAW), (S.SAMPLE_DIR, S.SRC_SAMPLE)):
-        for p in _csv_candidates(directory, ("merchants*.csv",)):
+        for p in _csv_candidates(directory, ("merchants_geocoded*.csv",
+                                             "merchants*.csv")):
             try:
                 df = schema.normalize_merchants(schema.read_csv_kr(p, dtype="string"))
                 if not df.empty:

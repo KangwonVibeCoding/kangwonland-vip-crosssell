@@ -6,6 +6,7 @@ streamlit 위젯 렌더는 확인할 수 없지만, 뷰가 호출하는 분석·
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -126,11 +127,18 @@ def test_local_curation_pipeline(period_a, bundle):
     deck = maps.build_merchants(data["merchants"], radius_km=30.0)
     assert not deck.empty
     assert (deck["dist_km"] <= 30.0).all()
-    assert deck["curation"].between(0, 100).all()
-    assert deck["curation"].is_monotonic_decreasing
-    assert deck["group"].isin(
-        ["숙박·리조트", "레저·골프", "식음·특산품", "기타"]
-    ).all()
+    assert deck["fit_score"].between(0, 100).all()
+    assert deck["fit_score"].is_monotonic_decreasing
+    assert deck["group"].isin(["음식", "소매", "숙박", S.CATEGORY_GROUP_OTHER]).all()
+
+    # 업종 적합도는 공개된 표(S.CATEGORY_FIT)의 값이거나 중립값이어야 한다.
+    # 임의의 숫자가 섞이면 '공개한 판단'이라는 근거가 무너진다.
+    allowed = set(S.CATEGORY_FIT.values()) | {S.CATEGORY_FIT_NEUTRAL}
+    assert set(deck["fit"].round(3)) <= {round(v, 3) for v in allowed}
+    # 업종을 모르는 행은 반드시 중립값이다 (0 으로 눕히면 없는 근거를 만든다)
+    unknown = ~deck["fit_known"].to_numpy(dtype=bool)
+    if unknown.any():
+        assert (deck.loc[unknown, "fit"] == S.CATEGORY_FIT_NEUTRAL).all()
 
     # pydeck Deck 생성 (외부 타일 요청 없음)
     deck_obj = maps.merchant_deck(deck, 30.0)
@@ -146,6 +154,45 @@ def test_local_curation_pipeline(period_a, bundle):
         data["sales"].loc[data["sales"]["channel"] == S.CH_LOCAL]
     )
     assert charts.season_line(daily).data
+
+
+def test_merchants_without_coords_are_counted_not_dropped(bundle):
+    """좌표를 못 찾은 가맹점을 조용히 지우지 않는다.
+
+    가맹점 좌표는 상호·주소 매칭이라 100% 가 되지 않는다(실측 91.6%). 나머지를
+    말없이 버리면 '반경 내 N곳'이 전수인 것처럼 읽힌다. 로더는 행을 남기고,
+    지도는 제외하되 **제외 건수를 attrs 로 돌려줘야** 화면에 표기할 수 있다.
+    """
+    data, _ = bundle
+    merchants = data["merchants"]
+    assert "has_coord" in merchants.columns
+
+    deck = maps.build_merchants(merchants, radius_km=30.0)
+    assert deck.attrs.get("no_coord") is not None
+    expected = int((~merchants["has_coord"].to_numpy(dtype=bool)).sum())
+    assert deck.attrs["no_coord"] == expected
+    # 지도에 올라간 행은 전부 좌표가 있다
+    assert deck["lat"].notna().all() and deck["lon"].notna().all()
+
+
+def test_point_limit_is_not_a_score_signal(bundle):
+    """포인트 사용 한도액을 스코어에 쓰지 않는다.
+
+    실측 1,681곳 중 1,578곳이 정확히 400만원(CV 0.052)이라 변별력이 없다.
+    ARS 의 winners(정원 캡)를 유입 지표에서 뺀 것과 같은 이유다.
+    """
+    data, _ = bundle
+    deck = maps.build_merchants(data["merchants"], radius_km=30.0)
+    if "point_limit" not in deck.columns:
+        return                      # 내장 폴백에는 이 컬럼이 없다
+    limit = pd.to_numeric(deck["point_limit"], errors="coerce").dropna()
+    if len(limit) > 10 and limit.mean():
+        assert limit.std() / limit.mean() < 0.2, "한도액이 상수가 아니게 됐다면 재검토"
+    # 상수 컬럼이 점수에 섞이지 않았는지 — 적합도는 거리·업종만으로 재현된다
+    proximity = np.exp(-deck["dist_km"] / S.PROXIMITY_DECAY_KM)
+    expected = 100.0 * (S.CURATION_WEIGHTS["proximity"] * proximity
+                        + S.CURATION_WEIGHTS["fit"] * deck["fit"])
+    assert np.allclose(deck["fit_score"], expected)
 
 
 def test_haversine_sanity():

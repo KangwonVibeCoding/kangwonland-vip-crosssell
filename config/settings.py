@@ -22,9 +22,20 @@ CSS_PATH = ROOT / "assets" / "styles.css"
 INGEST_REPORT = RAW_DIR / "_ingest_report.txt"
 
 # ── Open API (공공데이터포털) ──────────────────────────────────────────
-API_BASE = "https://api.odcloud.kr/api"
-EP_DEMOGRAPHICS = "15083033/v1/uddi:demographics"   # 고객성별연령분석현황
-EP_MERCHANTS = "15083033/v1/uddi:merchants"         # 하이원포인트 가맹점 상세정보
+# ⚠ 런타임에 이 API 를 호출하는 것에 의존하지 않는다. 제공기관 서버가 죽으면
+# 배포판이 같이 죽기 때문이다 — 실제로 2026-08-04 성별연령 API 가 게이트웨이는
+# 통과하는데 원본 서버에서 HTTP_ERROR(04) 를 돌려주는 상태였다.
+# `scripts/fetch_api_data.py` 로 **빌드 타임에 한 번** 받아 data/raw/*.csv 로
+# 떨구고, 앱은 그 파일을 L2/L3 로 읽는다. L4(런타임 호출)는 선택 계층으로만 남긴다.
+#
+# 엔드포인트는 **전체 URL** 이다. 포털 계열마다 페이지 파라미터가 다르다:
+#   apis.data.go.kr  → pageNo / numOfRows   (응답: response.body.items)
+#   api.odcloud.kr   → page   / perPage     (응답: data)
+# 섞어 보내면 HTTP_ERROR 가 난다 (실측).
+EP_DEMOGRAPHICS = (
+    "https://apis.data.go.kr/B552525/CustSexdstnAgeAnlsCnt/getCustSexdstnAgeAnlsCnt"
+)
+EP_MERCHANTS = "https://apis.data.go.kr/B552525/pbdata/getStoreInfo"
 API_TIMEOUT = 8
 API_PAGE_SIZE = 1000
 
@@ -141,7 +152,18 @@ COLUMN_MAP: dict[str, str] = {
     "성별": "gender",
     "연령대": "age_band",
     "방문고객수": "visitors",
-    # 가맹점 (Open API)
+    # 가맹점 (Open API — apis.data.go.kr/B552525/pbdata/getStoreInfo)
+    # 실제 응답 필드는 영문 코드명이다. 위경도·업종 컬럼은 **응답에 없다** —
+    # scripts/geocode_merchants.py 가 주소를 좌표·업종으로 바꿔 채운다.
+    "frcsnm": "merchant",
+    "frcsaddr": "address",
+    "frcsregno": "merchant_id",
+    "frcsbrno": "biz_no",
+    "frcstelno": "tel",
+    # ⚠ PNT_USABLE_AMT 는 가맹점별 포인트 '사용 한도액'이라 1,681건 중 1,578건
+    # (93.9%)이 정확히 4,000,000 이다 (CV 0.052). ARS 의 winners 와 같은 성격의
+    # 상수 컬럼이므로 스코어 신호로 쓰지 않는다 — 표시용으로만 매핑한다.
+    "pntusableamt": "point_limit",
     "가맹점명": "merchant",
     "위도": "lat",
     "경도": "lon",
@@ -215,7 +237,11 @@ INFLOW_WEIGHTS_NO_PRESSURE = {
 CAI_WEIGHTS = {"volume": 0.60, "breadth": 0.25, "dow": 0.15}
 VTS_WEIGHTS = {"inflow": 0.35, "base": 0.25, "proven": 0.20, "headroom": 0.20}
 CSM_WEIGHTS = {"elasticity": 0.45, "scale": 0.30, "margin": 0.25}
-CURATION_WEIGHTS = {"proximity": 0.60, "premium": 0.40}
+# 교차판매 적합도 = 거리 + 업종. 두 축은 서로 독립이라 합성이 의미를 갖는다.
+# (밀집도를 넣는 안은 버렸다 — 사북·고한은 가장 가깝고 동시에 가맹점이 가장
+#  많아 근접도와 같은 신호가 된다. VRB 가 유입의 상수배라 VTS 를 무의미하게
+#  만든 것과 같은 붕괴다.)
+CURATION_WEIGHTS = {"proximity": 0.60, "fit": 0.40}
 
 CAPACITY_CAP = 2990          # winners >= 이 값이면 정원 소진일로 본다
 HI_LO_QUANTILE = 0.30        # lift 계산의 고유입/저유입 분위
@@ -230,15 +256,40 @@ BUNDLE_MIN_DAYS = 8          # 번들 추천은 더 보수적으로 (상시 판�
 
 GRADE_BINS = ((75, "피크"), (50, "성수"), (25, "보통"), (0, "한산"))
 
-# 업종별 프리미엄 가중 (가맹점 큐레이션). 부분 문자열 매칭.
-CATEGORY_PREMIUM = {
-    "숙박": 1.0, "호텔": 1.0, "콘도": 0.9,
-    "골프": 1.0, "레저": 0.8, "스키": 0.8,
-    "음식": 0.7, "식당": 0.7, "카페": 0.5,
-    "특산": 0.9, "농산": 0.8, "쇼핑": 0.6, "판매": 0.6,
-    "주유": 0.3, "의료": 0.3, "기타": 0.2,
+# ── 가맹점 업종 적합도 ─────────────────────────────────────────────────
+# 하이원포인트 가맹점 API 는 업종을 주지 않는다. 업종은 소상공인시장진흥공단
+# 상가(상권)정보의 **상권업종대분류명**(표준산업분류 기반 공식 체계)을 조인해
+# 채운다 (scripts/join_merchant_geo.py). 아래 키는 그 분류의 실제 값이다.
+#
+# ⚠ 이전 판은 '골프' '스키' '특산' 처럼 **그 분류체계에 존재하지 않는** 이름에
+# 가중치를 매기고 있었다. 실데이터에서는 전부 기본값으로 떨어져 지표가 사실상
+# 상수였다. 실제 관측된 값(음식 579 / 소매 425 / 수리·개인 169 / 숙박 115 /
+# 예술·스포츠 15 / 과학·기술 6 / 교육 2)에 맞춰 다시 정의한다.
+#
+# 가중치는 데이터에서 유도한 값이 아니라 **판단**이다. 그래서 이름을 '프리미엄'이
+# 아니라 '적합도'로 두고, 이 표를 UI 에 그대로 노출한다 — 숨긴 판단은 과장이지만
+# 공개한 판단은 검증 가능한 설계다. 기준은 '카지노 방문객의 체류 동선과 겹치는가'.
+CATEGORY_FIT = {
+    "소매": 1.0,          # 특산품·기념품 — 교차판매 대상 그 자체
+    "음식": 0.9,          # 체류 중 식사 동선
+    "숙박": 0.8,          # 연박 유도
+    "예술·스포츠": 0.6,    # 레저 연계 체험
+    "보건의료": 0.2,
+    "수리·개인": 0.2,      # 미용·세탁 — 관광 동선이 아니다
+    "과학·기술": 0.1,
+    "교육": 0.1,
+    "부동산": 0.1,
+    "시설관리·임대": 0.1,
 }
-CATEGORY_PREMIUM_DEFAULT = 0.4
+# 업종 미상(주소로만 좌표를 찾은 건)은 적합도를 **중립 0.5** 로 둔다.
+# 0 으로 두면 '부적합'이라는 없는 근거를 만들고, 1 로 두면 그 반대다.
+# lift 표본 미달 시 elasticity 를 중립 0.5 로 두는 것과 같은 규약이다.
+CATEGORY_FIT_NEUTRAL = 0.5
+
+# 지도 마커 색 — 전체쌍 색약 검증을 통과한 3색까지만 쓴다. 실측 분포상
+# 음식·소매·숙박이 전체의 92% 라 이 셋을 색으로 두고 나머지는 회색으로 눕힌다.
+CATEGORY_GROUPS = {"음식": "음식", "소매": "소매", "숙박": "숙박"}
+CATEGORY_GROUP_OTHER = "기타"
 
 # ── 캐싱 / 성능 ───────────────────────────────────────────────────────
 CACHE_TTL = 3600

@@ -296,8 +296,24 @@ def normalize_demographics(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalize_merchants(df: pd.DataFrame) -> pd.DataFrame:
-    """하이원포인트 가맹점 표준화. 좌표 결측·0 행은 지도에 못 그리므로 제거."""
+    """하이원포인트 가맹점 표준화.
+
+    ⚠ 원본 API(`getStoreInfo`)는 **위경도도 업종도 주지 않는다** — 상호명·주소·
+    전화번호뿐이다. 둘 다 `scripts/join_merchant_geo.py` 가 소상공인시장진흥공단
+    상가(상권)정보와 조인해 채운 뒤 `merchants_geocoded.csv` 로 떨어진다.
+    아직 조인하지 않은 원본 응답이 들어오면 예외를 던지는 대신 **빈 프레임**을
+    돌려준다 — 로더가 다음 후보 파일로 넘어가야 하고, 예외로 폴백 사슬을 끊으면
+    안 되기 때문이다.
+
+    ⚠ **좌표가 없는 행을 버리지 않는다.** 상호·주소 매칭이라 100% 가 되지 않고
+    (실측 91.6%), 나머지를 조용히 지우면 "가맹점 1,540곳"이 전수인 것처럼 보인다.
+    행은 남기고 `has_coord` 로 표시해 호출자가 건수를 화면에 드러낼 수 있게 한다.
+    지도 레이어는 `has_coord` 로 거른다.
+    """
     df, _ = rename_columns(df)
+    if "lat" not in df.columns or "lon" not in df.columns:
+        return pd.DataFrame(columns=["merchant", "lat", "lon", "category",
+                                     "has_coord"])
     out = df.assign(lat=_to_float(df["lat"]), lon=_to_float(df["lon"]))
     for col in ("merchant", "category"):
         if col in out.columns:
@@ -307,9 +323,14 @@ def normalize_merchants(df: pd.DataFrame) -> pd.DataFrame:
         else:
             out = out.assign(**{col: pd.Series([""] * len(out), dtype="string")})
     valid = out["lat"].notna() & out["lon"].notna() & out["lat"].ne(0) & out["lon"].ne(0)
-    # 한반도 대략 범위 밖 좌표는 오염 데이터로 본다
+    # 한반도 대략 범위 밖 좌표는 오염 데이터로 본다 (오매칭 방어)
     valid &= out["lat"].between(33, 39) & out["lon"].between(124, 132)
-    return out.loc[valid].reset_index(drop=True)
+    # 범위 밖 좌표는 값 자체를 버린다 — 남겨두면 지도에 엉뚱한 점이 찍힌다
+    return out.assign(
+        has_coord=valid.to_numpy(dtype=bool),
+        lat=out["lat"].where(valid),
+        lon=out["lon"].where(valid),
+    ).reset_index(drop=True)
 
 
 def validate(df: pd.DataFrame, required: tuple[str, ...], name: str) -> list[str]:

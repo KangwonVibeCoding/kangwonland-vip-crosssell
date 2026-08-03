@@ -41,9 +41,13 @@ def render(ctx: dict) -> None:
                    C.fmt_pct(prem_qty / total_qty if total_qty else None), "", 0,
                    note="명품·와인·홍삼 등")
     with cols[2]:
+        # 좌표를 못 찾은 가맹점은 지도에서 빠진다. 그 수를 카드에 그대로 적어
+        # '반경 내 N곳'이 전수인 것처럼 읽히지 않게 한다.
+        no_coord = int(deck_df.attrs.get("no_coord", 0))
         C.kpi_card("반경 내 가맹점", C.fmt_int(len(deck_df), "곳"),
                    f"반경 {fs.radius_km:,.0f}km", 0,
-                   note="하이원포인트 사용처")
+                   note=(f"좌표 미확인 {no_coord}곳 제외" if no_coord
+                         else "하이원포인트 사용처"))
 
     if local_sales.empty and deck_df.empty:
         C.empty_state(
@@ -93,17 +97,47 @@ def render(ctx: dict) -> None:
         else:
             st.pydeck_chart(maps.merchant_deck(deck_df, fs.radius_km),
                             width="stretch", height=430)
-            legend = " · ".join(
-                f"{group}" for group in deck_df["group"].unique()
-            )
-            st.caption(f"업종 그룹: {legend} · 마커 크기 = 큐레이션 스코어")
+            legend = " · ".join(str(g) for g in deck_df["group"].unique())
+            st.caption(f"업종 그룹: {legend} · 마커 크기 = 교차판매 적합도")
             C.table_view(
                 deck_df[["merchant", "category", "group", "dist_km",
-                         "curation"]].round(2).rename(columns={
+                         "fit", "fit_score"]].round(2).rename(columns={
                     "merchant": "가맹점", "category": "업종", "group": "그룹",
-                    "dist_km": "거리(km)", "curation": "큐레이션"}),
+                    "dist_km": "거리(km)", "fit": "업종 적합도",
+                    "fit_score": "교차판매 적합도"}),
                 label="가맹점 표로 보기",
             )
+
+            # 적합도 가중치는 데이터에서 유도한 값이 아니라 판단이다.
+            # 숨기면 과장이 되고, 공개하면 검증 가능한 설계가 된다.
+            unknown = int((~deck_df["fit_known"].to_numpy(dtype=bool)).sum()) \
+                if "fit_known" in deck_df.columns else 0
+            with st.expander("교차판매 적합도는 어떻게 계산했나"):
+                st.markdown(
+                    "**교차판매 적합도 = 100 × (0.6 × 근접도 + 0.4 × 업종 적합도)**\n\n"
+                    f"근접도 = `exp(−거리km / {S.PROXIMITY_DECAY_KM:.0f})` — "
+                    "강원랜드에서 멀어질수록 지수적으로 감소합니다."
+                )
+                st.dataframe(
+                    pd.DataFrame(
+                        [{"업종": k, "적합도": v} for k, v in S.CATEGORY_FIT.items()]
+                    ).sort_values("적합도", ascending=False),
+                    width="stretch", hide_index=True,
+                )
+                st.caption(
+                    "업종은 소상공인시장진흥공단 상가(상권)정보의 상권업종대분류명"
+                    "(표준산업분류 기반)입니다. **적합도 가중치는 데이터에서 유도한 "
+                    "값이 아니라 '카지노 방문객 체류 동선과 겹치는가'라는 판단**이며, "
+                    "그래서 표를 그대로 공개합니다. "
+                    + (f"업종 미상 {unknown}곳은 중립값 "
+                       f"{S.CATEGORY_FIT_NEUTRAL}로 처리했습니다 — 0으로 두면 "
+                       "'부적합'이라는 없는 근거를 만들기 때문입니다."
+                       if unknown else "")
+                )
+                st.caption(
+                    "포인트 사용 한도액(PNT_USABLE_AMT)은 지표에 넣지 않았습니다 — "
+                    "1,681곳 중 1,578곳이 정확히 400만원이라(CV 0.052) 변별력이 없습니다."
+                )
 
     # ── 명절 선물 시즌 ────────────────────────────────────────────────
     full_local = ctx["data"]["sales"]
@@ -142,7 +176,7 @@ def render(ctx: dict) -> None:
     st.markdown("")
     C.section_header(
         "VIP 로컬 패키지 제안",
-        "큐레이션 상위 가맹점 × CSM 상위 특산품 조합. 특산품은 유입 익일(D+1)에 "
+        "적합도 상위 가맹점 × CSM 상위 특산품 조합. 특산품은 유입 익일(D+1)에 "
         "팔리므로 집행 시점을 체크아웃 동선에 맞춘다.",
         badge=fs.period_badge,
     )
@@ -161,16 +195,21 @@ def render(ctx: dict) -> None:
             with col:
                 C.prescription_card(
                     title=f"패키지 {pkg['rank']}",
-                    targets=[pkg["tier"], pkg["category"]],
+                    targets=[pkg["tier"], pkg["category"] or "업종 미상"],
                     detail=f"{pkg['item']} + {pkg['merchant']}",
                     evidence=(
                         f"상품 CSM {pkg['item_csm']:.1f} · "
-                        f"가맹점 큐레이션 {pkg['curation']:.1f} · "
-                        f"카지노에서 {pkg['dist_km']:.1f}km"
+                        f"가맹점 적합도 {pkg['fit_score']:.1f}"
+                        + ("" if pkg["fit_known"] else "(업종 미상)")
+                        + f" · 카지노에서 {pkg['dist_km']:.1f}km"
                     ),
                 )
 
     C.caveat(
-        "가맹점 큐레이션 스코어 = 카지노 기준점(37.2007, 128.8155)으로부터의 근접도"
-        "(5km 감쇠)와 업종 프리미엄 가중의 합입니다. 업종 가중치는 도메인 가정값입니다."
+        f"교차판매 적합도 = 카지노 기준점{S.CASINO_LATLON}으로부터의 근접도"
+        f"({S.PROXIMITY_DECAY_KM:.0f}km 감쇠) {S.CURATION_WEIGHTS['proximity']:.0%} + "
+        f"업종 적합도 {S.CURATION_WEIGHTS['fit']:.0%}. 업종 가중치는 데이터가 아니라 "
+        "판단이며 위 '어떻게 계산했나'에 표로 공개했습니다. "
+        "가맹점 좌표·업종은 상가(상권)정보 조인 결과로, 상호·주소 매칭이라 "
+        "전수가 아닙니다."
     )

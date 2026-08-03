@@ -105,6 +105,19 @@ def _extract_rows(payload: Any) -> list[dict]:
     if not isinstance(payload, dict):
         raise ValueError(f"예상치 못한 응답 타입: {type(payload).__name__}")
 
+    # 포털 오류 봉투를 먼저 걸러낸다. 그냥 두면 "레코드 목록을 못 찾음" 으로
+    # 뭉뚱그려져 원인(키 미등록/미승인/제공기관 서버 오류)이 사라진다.
+    #   04 HTTP_ERROR                        원본 서버가 응답하지 않음
+    #   20 SERVICE_ACCESS_DENIED_ERROR       활용신청 미승인
+    #   30 SERVICE_KEY_IS_NOT_REGISTERED     키 미등록 (Encoding 키를 쓴 경우 포함)
+    header = payload.get("OpenAPI_ServiceResponse", {}).get("cmmMsgHeader")
+    if isinstance(header, dict):
+        raise ValueError(
+            f"{header.get('errMsg', '알 수 없는 오류')} "
+            f"(코드 {header.get('returnReasonCode', '?')}) "
+            f"— {header.get('returnAuthMsg', '')}".strip()
+        )
+
     if isinstance(payload.get("data"), list):
         return payload["data"]
 
@@ -121,8 +134,25 @@ def _extract_rows(payload: Any) -> list[dict]:
     raise ValueError("응답에서 레코드 목록을 찾지 못했습니다")
 
 
+def page_params(endpoint: str, page: int, size: int) -> dict:
+    """포털 계열에 맞는 페이지 파라미터. 섞어 보내면 HTTP_ERROR 가 난다(실측).
+
+      apis.data.go.kr → pageNo / numOfRows + type=json
+      api.odcloud.kr  → page   / perPage
+    """
+    if "odcloud.kr" in endpoint:
+        return {"page": page, "perPage": size}
+    return {"pageNo": page, "numOfRows": size, "type": "json"}
+
+
 def fetch_json(endpoint: str, params: dict | None = None) -> list[dict] | None:
-    """Open API 호출. 실패 시 디스크 캐시 → None 순으로 폴백한다."""
+    """Open API 호출. 실패 시 디스크 캐시 → None 순으로 폴백한다.
+
+    `endpoint` 는 전체 URL 이다 (settings.EP_*). 값이 비어 있으면 호출하지 않는다 —
+    아직 확인되지 않은 엔드포인트를 부르면 무의미한 오류만 쌓인다.
+    """
+    if not endpoint:
+        return None
     params = dict(params or {})
     key = api_key()
     if not key:
@@ -133,8 +163,8 @@ def fetch_json(endpoint: str, params: dict | None = None) -> list[dict] | None:
 
     try:
         resp = requests.get(
-            f"{S.API_BASE}/{endpoint}",
-            params={**params, "serviceKey": key, "returnType": "JSON", "type": "json"},
+            endpoint,
+            params={**params, "serviceKey": key},
             timeout=S.API_TIMEOUT,
         )
         resp.raise_for_status()
@@ -148,21 +178,25 @@ def fetch_json(endpoint: str, params: dict | None = None) -> list[dict] | None:
         return _read_cache(endpoint, params)
 
 
-def fetch_paged(endpoint: str, max_pages: int = 5) -> list[dict] | None:
-    """페이지네이션 순회. 첫 페이지가 실패하면 즉시 폴백으로 넘긴다."""
-    first = fetch_json(endpoint, {"page": 1, "perPage": S.API_PAGE_SIZE,
-                                 "pageNo": 1, "numOfRows": S.API_PAGE_SIZE})
+def fetch_paged(endpoint: str, max_pages: int = 5,
+                page_size: int | None = None) -> list[dict] | None:
+    """페이지네이션 순회. 첫 페이지가 실패하면 즉시 폴백으로 넘긴다.
+
+    마지막 페이지 판정은 **직전 페이지의 행 수**로 한다. 예전 구현은 첫 페이지
+    길이만 보고 있어서, 2페이지가 짧아도 남은 페이지를 계속 두드렸다.
+    """
+    size = page_size or S.API_PAGE_SIZE
+    first = fetch_json(endpoint, page_params(endpoint, 1, size))
     if not first:
         return None
     rows = list(first)
+    prev = first
     for page in range(2, max_pages + 1):
-        if len(first) < S.API_PAGE_SIZE:
+        if len(prev) < size:
             break
-        nxt = fetch_json(endpoint, {"page": page, "perPage": S.API_PAGE_SIZE,
-                                    "pageNo": page, "numOfRows": S.API_PAGE_SIZE})
+        nxt = fetch_json(endpoint, page_params(endpoint, page, size))
         if not nxt:
             break
         rows.extend(nxt)
-        if len(nxt) < S.API_PAGE_SIZE:
-            break
+        prev = nxt
     return rows
