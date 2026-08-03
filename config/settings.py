@@ -50,6 +50,11 @@ MULTI_VENUE_CHANNELS = (CH_CASINO,)
 #   A: ARS + 판매가 모두 있는 유일한 구간 → 진짜 날짜 조인, 상관·래그 실측
 #   B: 판매만 있는 구간 → CAI(객장 활동 지수) + 요일 브릿지
 #   C: ARS만 있는 구간 → 최신 유입 트렌드 참조
+#
+# ⚠ 구간 A 는 `data/raw/ars_20241201_20241231.csv` 에 의존한다. 2026년 ARS
+#   전처리본(ars_merged.csv)에는 2024-12 이 없어서, 이 파일이 빠지면 ARS 와
+#   판매가 겹치는 날이 0일이 되고 상관·래그 분석이 전부 무너진다.
+#   복원: python scripts/restore_ars_2024.py
 PERIOD_A = "A"
 PERIOD_B = "B"
 PERIOD_C = "C"
@@ -65,18 +70,18 @@ PERIODS: dict[str, dict] = {
         "has_sales": True,
     },
     PERIOD_B: {
-        "label": "연간 확장 · 2024 전체 (요일 브릿지)",
+        "label": "연간 확장 · 2023~2024 (요일 브릿지)",
         "badge": "요일 브릿지",
-        "start": dt.date(2024, 1, 1),
+        "start": dt.date(2023, 1, 1),
         "end": dt.date(2024, 12, 31),
-        "has_ars": True,     # 12월분만 존재 → 부분 조인
+        "has_ars": True,     # 2024-12 분만 존재 → 부분 조인
         "has_sales": True,
     },
     PERIOD_C: {
-        "label": "최신 유입 · 2026-05 (판매 데이터 없음)",
+        "label": "최신 유입 · 2026 상반기 (판매 데이터 없음)",
         "badge": "최신 유입",
-        "start": dt.date(2026, 5, 1),
-        "end": dt.date(2026, 5, 31),
+        "start": dt.date(2026, 1, 1),
+        "end": dt.date(2026, 6, 30),
         "has_ars": True,
         "has_sales": False,
     },
@@ -101,6 +106,21 @@ COLUMN_MAP: dict[str, str] = {
     "모바일당첨자": "win_mobile",
     "당첨자입장권구매건수": "tickets",
     "당첨자입장권구매율": "buy_rate",
+    # ARS 전처리본(ars_merged.csv) — 컬럼명이 이미 영문이고 축약돼 있다.
+    # ⚠ 총접수자·모바일 접수자가 빠져 있어 recv_* 계열이 결측이 된다.
+    #   CII 는 이 결측을 감지해 tickets/buy_rate 2축으로 폴백한다.
+    "winnerstotal": "winners",
+    "ticketpurchases": "tickets",
+    "purchaserate": "buy_rate",
+    # 이미 표준명인 컬럼을 그대로 통과시킨다 (정규화된 CSV 재입력 대응)
+    "recvtotal": "recv_total",
+    "recvars": "recv_ars",
+    "recvmobile": "recv_mobile",
+    "winners": "winners",
+    "winars": "win_ars",
+    "winmobile": "win_mobile",
+    "tickets": "tickets",
+    "buyrate": "buy_rate",
     # 판매 3종
     "영업장아이디id": "venue_id",
     "영업장명": "venue",
@@ -109,6 +129,14 @@ COLUMN_MAP: dict[str, str] = {
     "상품영문명": "item_en",
     "할인구분여부": "is_discount",
     "판매수량": "qty",
+    # 골프장 이용객 현황 (2021~2025). 판매 데이터와 컬럼명이 겹치지 않는다 —
+    # '영업장'(golf) vs '영업장명'(판매) 은 normalize_key 후에도 서로 다르다.
+    "시즌구분": "season",
+    "주중주말": "day_type",
+    "요일": "dow_label",
+    "영업장": "golf_venue",
+    "영업상태": "open_status",
+    "이용인원": "visitors",
     # 인구통계 (Open API)
     "성별": "gender",
     "연령대": "age_band",
@@ -120,10 +148,23 @@ COLUMN_MAP: dict[str, str] = {
     "업종구분": "category",
 }
 
-ARS_REQUIRED = ("date", "recv_total", "winners", "tickets", "buy_rate")
+# recv_total 은 필수에서 뺐다. 2026년 ARS 전처리본에는 총접수자 컬럼이 없고,
+# 그 기간에도 tickets/buy_rate 만으로 유입 지수를 낼 수 있어야 하기 때문이다.
+ARS_REQUIRED = ("date", "winners", "tickets", "buy_rate")
+# 있으면 쓰고 없으면 결측으로 두는 컬럼. 0 으로 채우지 않는다 — 접수자 0명이라는
+# 거짓을 만들고 상관·정규화를 통째로 왜곡한다.
+ARS_OPTIONAL = ("recv_total", "recv_ars", "recv_mobile", "win_ars", "win_mobile")
 SALES_REQUIRED = ("date", "venue", "item", "qty")
 DEMO_REQUIRED = ("gender", "age_band", "visitors")
 MERCHANT_REQUIRED = ("merchant", "lat", "lon", "category")
+GOLF_REQUIRED = ("date", "golf_venue", "visitors")
+
+# ── 골프장 이용객 (2021-03 ~ 2025-12) ──────────────────────────────────
+# 판매 3종과 기간이 거의 겹치지 않고(판매는 2023~2024) 단위도 다르므로 채널로
+# 합치지 않는다. 별도 데이터셋으로 로드만 해 두고 UI 노출은 하지 않는다.
+GOLF_VENUES = ("그린피", "카트대여", "용품대여", "드라이빙레인지")
+GOLF_VENUE_PRIMARY = "그린피"          # 실제 라운딩 인원 = 이용객 수의 기준
+GOLF_CLOSED_STATUSES = ("휴장영업",)   # 집계에서 제외할 영업상태
 
 # ── VIP / 마진 프록시 (실데이터 분석으로 2티어 확정) ────────────────────
 # 단일 정규식이면 특산품 히트율이 31.4% 로 과대해진다(실측). '명품잡곡6종세트'와
@@ -163,6 +204,14 @@ GENDER_OPTIONS = ("전체", "남", "여")
 # CII: 원안의 winners(총 당첨자)는 일일 정원 캡(최대 2,999)으로 거의 상수라
 #      제외했다. 실측 CV — recv_total 0.372 / tickets 0.302 / winners 0.178
 INFLOW_WEIGHTS = {"demand": 0.45, "pressure": 0.35, "convert": 0.20}
+# recv_total(수요 압력)이 없는 구간용 폴백 — 압력 축만 빼고 나머지 비율은 그대로
+# 둔다. wsum 이 남은 가중치 합으로 재정규화하므로 실효 비율은 0.692:0.308 이 된다.
+# 값을 직접 적지 않고 파생시키는 이유: INFLOW_WEIGHTS 를 조정했을 때 폴백이
+# 따라오지 않으면 구간마다 지수의 성격이 조용히 달라진다.
+# 2026년 실측 CV — tickets 0.258 / buy_rate 0.139 / winners 0.155(여전히 캡)
+INFLOW_WEIGHTS_NO_PRESSURE = {
+    k: v for k, v in INFLOW_WEIGHTS.items() if k != "pressure"
+}
 CAI_WEIGHTS = {"volume": 0.60, "breadth": 0.25, "dow": 0.15}
 VTS_WEIGHTS = {"inflow": 0.35, "base": 0.25, "proven": 0.20, "headroom": 0.20}
 CSM_WEIGHTS = {"elasticity": 0.45, "scale": 0.30, "margin": 0.25}

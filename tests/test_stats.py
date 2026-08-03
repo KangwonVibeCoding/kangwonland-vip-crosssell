@@ -16,15 +16,27 @@ from config import settings as S
 from src.analysis import crosssell, inflow as inflow_mod, lag, stats, vip
 from src.data import loaders
 
-# ── 실측 기준값 (2024-12, 31일 실제 날짜 조인) ─────────────────────────
-EXPECTED_ROWS = {S.CH_CASINO: 90_983, S.CH_LOCAL: 35_653, S.CH_ROOM: 18_514}
+# ── 실측 기준값 ────────────────────────────────────────────────────────
+# 판매 데이터는 2023-01-01 ~ 2024-12-31 (2년). 2024년분만 보면 각각
+# 90,983 / 35,653 / 18,514 로 이전과 동일하다 — 2023년이 통째로 더해진 것이다.
+SALES_START = pd.Timestamp("2023-01-01")
+SALES_END = pd.Timestamp("2024-12-31")
+EXPECTED_ROWS = {S.CH_CASINO: 179_287, S.CH_LOCAL: 69_353, S.CH_ROOM: 36_226}
+EXPECTED_ROWS_2024 = {S.CH_CASINO: 90_983, S.CH_LOCAL: 35_653, S.CH_ROOM: 18_514}
 
-# 무상 제공 상품 = '(V)' 접두 11종 21,870개 + '무료' 포함 38종 210,372개.
-# 후자가 10배 크고 전부 카지노 식음의 컴플리멘터리 음료다('18)헛개차(무료)' 등).
-EXPECTED_COMP_QTY = 232_242
-EXPECTED_COMP_V_ONLY = 21_870
+# ARS 는 두 파일이 합쳐진다:
+#   ars_20241201_20241231.csv  2024-12  31행 — 구간 A 의 유일한 근거
+#   ars_merged.csv             2026 상반기 181행 (recv_total 계열 없음)
+EXPECTED_ARS_ROWS = 212
+EXPECTED_ARS_RECV_TOTAL_DAYS = 31     # recv_total 이 실제로 있는 날 수
 
-# 특산품은 2024-12-17 하루가 원본에 없다 (2024년 365일 중 유일한 결측일).
+# 무상 제공 상품 = '(V)' 접두 30,560개 + '무료' 포함 414,912개 (2023~2024 합산).
+# 후자가 13배 크고 전부 카지노 식음의 컴플리멘터리 음료다('18)헛개차(무료)' 등).
+EXPECTED_COMP_QTY = 445_472
+EXPECTED_COMP_V_ONLY = 30_560
+EXPECTED_COMP_FREE = 414_912
+
+# 특산품은 2024-12-17 하루가 원본에 없다 (2023~2024 730일 중 유일한 결측일).
 # 결측일을 0 으로 채우지 않고 내부 조인으로 제외하기 때문에 특산품만 n=30 이다.
 # 일별 최소 판매량이 206 이므로 '판매 0인 날'이 아니라 데이터 누락으로 본다 —
 # 0 을 채워 넣으면 없는 사실을 만드는 셈이고, 상관·요일지수가 모두 왜곡된다.
@@ -52,7 +64,13 @@ EXPECTED_LAG_R = {S.CH_CASINO: {0: 0.796, 1: 0.295, 2: -0.296},
                   S.CH_LOCAL: {0: 0.370, 1: 0.467, 2: 0.102}}
 EXPECTED_BEST_LAG = {S.CH_CASINO: 0, S.CH_ROOM: 0, S.CH_LOCAL: 1}
 EXPECTED_DOW_LOCAL = {"일": 1.629, "목": 0.642}
-EXPECTED_MONTH = {S.CH_LOCAL: (9, 1.48), S.CH_ROOM: (1, 1.23)}
+# 2023년 판매 데이터가 더해지면서 계절성이 2년 평균으로 희석됐다 (특산품 9월
+# 1.48→1.43, 룸서비스 1월 1.23→1.21). 피크 월 자체는 그대로이므로 추석·설
+# 성수기 해석은 유지된다 — 오히려 2개년에서 재현됐으니 근거가 강해진 것이다.
+EXPECTED_MONTH = {S.CH_LOCAL: (9, 1.43), S.CH_ROOM: (1, 1.21)}
+# 매월 1일 스파이크도 2년 평균에서 1.62→1.45 로 낮아졌다. robust 정규화가
+# 필요하다는 근거(=1일이 스케일을 독점한다)는 그대로다.
+EXPECTED_MONTH_FIRST_SPIKE = 1.45
 
 TOL = 0.01          # 상관계수 허용 오차
 TOL_IDX = 0.02      # 요일·월 인덱스 허용 오차
@@ -99,16 +117,54 @@ def test_sales_total_rows(real_data):
     assert len(real_data["sales"]) == sum(EXPECTED_ROWS.values())
 
 
+def test_sales_2024_slice_unchanged(real_data):
+    """2024년분은 데이터 교체 전과 행 수가 완전히 같아야 한다.
+
+    새 원본은 2023년을 덧붙였을 뿐 2024년을 다시 만들지 않았다는 확인이다.
+    여기가 깨지면 구간 A 의 상관·래그 기준값도 더는 믿을 수 없다.
+    """
+    sales = real_data["sales"]
+    y2024 = sales.loc[sales["date"].dt.year == 2024]
+    counts = y2024["channel"].value_counts().to_dict()
+    for channel, expected in EXPECTED_ROWS_2024.items():
+        assert counts.get(channel) == expected, f"{channel} 2024년 행 수 불일치"
+
+
+def test_sales_span_is_two_years(real_data):
+    sales = real_data["sales"]
+    assert sales["date"].min() == SALES_START
+    assert sales["date"].max() == SALES_END
+
+
 def test_ars_glob_concat(real_data):
-    """ARS 로더가 여러 파일을 concat 하는지 — 파일 추가 시 구간 확장의 전제."""
+    """ARS 로더가 여러 파일을 concat 하는지 — 구간 A 성립의 전제.
+
+    2026년 전처리본만으로는 판매 데이터(2023~2024)와 겹치는 날이 0일이라
+    실측 조인이 불가능하다. 2024-12 파일이 함께 잡혀야 한다.
+    """
     ars = real_data["ars"]
     years = set(ars["date"].dt.year)
     assert {2024, 2026} <= years, f"ARS 가 여러 기간을 포함해야 합니다: {years}"
-    assert len(ars) == 62
+    assert len(ars) == EXPECTED_ARS_ROWS
+
+
+def test_ars_recv_total_partially_present(real_data):
+    """recv_total 이 2024-12 에만 있고 2026 구간에서는 결측이어야 한다.
+
+    2026년 전처리본에서 총접수자 컬럼이 탈락했다. 0 으로 채우면 '그 날 접수자가
+    0명'이라는 거짓이 정규화 스케일과 상관계수에 그대로 들어가므로, 결측을
+    결측으로 유지하는 것이 요구사항이다.
+    """
+    ars = real_data["ars"]
+    assert "recv_total" in ars.columns
+    have = ars.loc[ars["recv_total"].notna()]
+    assert len(have) == EXPECTED_ARS_RECV_TOTAL_DAYS
+    assert set(have["date"].dt.year) == {2024}
+    assert (ars.loc[ars["date"].dt.year == 2026, "recv_total"].isna()).all()
 
 
 def test_buy_rate_identity(real_data):
-    """구매율 == 구매건수 / 총당첨자 — 원본 정합성 (실측 62/62행 일치)."""
+    """구매율 == 구매건수 / 총당첨자 — 원본 정합성 (전 212행 일치)."""
     ars = real_data["ars"]
     derived = ars["tickets"] / ars["winners"]
     assert np.allclose(derived, ars["buy_rate"], atol=0.001)
@@ -141,7 +197,7 @@ def test_free_items_are_comp(real_data):
     free = sales.loc[sales["item"].str.contains("무료", regex=False, na=False)]
     assert not free.empty
     assert free["is_comp"].all()
-    assert int(free["qty"].sum()) == 210_372
+    assert int(free["qty"].sum()) == EXPECTED_COMP_FREE
 
 
 def test_venue_asymmetry(real_data):
@@ -160,6 +216,52 @@ def test_no_hour_column(real_data):
     assert "hour" not in real_data["sales"].columns
 
 
+# ── 골프장 이용객 (신규 데이터셋) ──────────────────────────────────────
+@pytest.fixture(scope="module")
+def golf_real():
+    df, source = loaders._load_golf_impl()
+    if source not in S.REAL_SOURCES:
+        pytest.skip("골프 실데이터(data/raw)가 없어 건너뜁니다")
+    return df
+
+
+def test_golf_drops_blank_padding_rows(golf_real):
+    """원본 끝의 빈 패딩 행 47개가 제거되는지 (2,750 → 2,703).
+
+    이 행들은 영업일자를 포함해 모든 값이 비어 있다. 날짜 결측 행이 하나라도
+    남으면 add_date_parts 의 isocalendar().week 변환이 예외를 던진다.
+    """
+    assert len(golf_real) == 2_703
+    assert golf_real["date"].notna().all()
+
+
+def test_golf_schema(golf_real):
+    """골프 표준 스키마 — 판매 데이터와 컬럼이 충돌하지 않아야 한다."""
+    for col in S.GOLF_REQUIRED:
+        assert col in golf_real.columns
+    assert set(golf_real["golf_venue"].unique()) <= set(S.GOLF_VENUES)
+    assert golf_real["date"].min() == pd.Timestamp("2021-03-19")
+    assert golf_real["date"].max() == pd.Timestamp("2025-12-07")
+
+
+def test_golf_closed_flag(golf_real):
+    """휴장일을 행 삭제가 아니라 플래그로 남기는지 — 휴장 분포도 시즌 신호다."""
+    assert golf_real["is_closed"].any()
+    assert not golf_real["is_closed"].all()
+    closed = golf_real.loc[golf_real["is_closed"]]
+    assert set(closed["open_status"].unique()) <= set(S.GOLF_CLOSED_STATUSES)
+
+
+def test_golf_is_separate_from_sales(real_data, golf_real):
+    """골프가 판매 채널로 섞여 들어가지 않았는지.
+
+    단위(이용인원)와 기간(2021~2025)이 판매 3종과 달라서 합치면 CAI·CSM 이
+    전부 오염된다. 채널 집합이 3개로 유지되는 것이 경계선이다.
+    """
+    assert set(real_data["sales"]["channel"].unique()) == set(S.CHANNELS)
+    assert "golf_venue" not in real_data["sales"].columns
+
+
 # ── 상관계수 회귀 (핵심) ───────────────────────────────────────────────
 def test_local_goods_missing_day(real_data):
     """특산품 결측일이 2024-12-17 하나뿐임을 고정한다.
@@ -170,9 +272,16 @@ def test_local_goods_missing_day(real_data):
     sales = real_data["sales"]
     have = set(sales.loc[sales["channel"] == S.CH_LOCAL, "date"].unique())
     expected_missing = [
-        d for d in pd.date_range("2024-01-01", "2024-12-31") if d not in have
+        d for d in pd.date_range(SALES_START, SALES_END) if d not in have
     ]
     assert expected_missing == [LOCAL_MISSING_DAY]
+
+    # 다른 두 채널은 2년 730일이 빠짐없이 있다 — 특산품 결측이 채널 고유
+    # 현상임을 고정한다 (전역 수집 누락이면 세 채널이 같이 빠졌을 것이다).
+    for channel in (S.CH_CASINO, S.CH_ROOM):
+        days = set(sales.loc[sales["channel"] == channel, "date"].unique())
+        gaps = [d for d in pd.date_range(SALES_START, SALES_END) if d not in days]
+        assert gaps == [], f"{channel} 에 예상 못한 결측일: {gaps[:5]}"
 
 
 def test_corr_table_matches_measured(period_a):
@@ -239,11 +348,28 @@ def test_dow_index_local_goods(period_a):
 
 
 def test_month_index_full_year(real_data):
-    """연간 계절성: 특산품 9월 1.48(추석), 룸서비스 1월 1.23(설·스키)."""
+    """연간 계절성 (2023~2024 2년): 특산품 9월 1.43(추석), 룸서비스 1월 1.21."""
     sales = real_data["sales"]
     for channel, (month, expected) in EXPECTED_MONTH.items():
         idx = stats.month_index(stats.daily_qty(sales, channel))
         assert idx.get(month) == pytest.approx(expected, abs=TOL_IDX)
+        assert int(idx.idxmax()) == month, f"{channel} 피크 월이 {month}월이 아님"
+
+
+def test_seasonality_repeats_across_years(real_data):
+    """계절성 피크가 2023·2024 두 해 모두에서 재현되는지.
+
+    2년 평균만 보면 우연히 한 해의 이벤트가 평균을 끌어올린 것과 구분되지
+    않는다. 각 연도에서 따로 확인해야 '계절성'이라고 말할 수 있다.
+    """
+    sales = real_data["sales"]
+    for channel, (month, _) in EXPECTED_MONTH.items():
+        for year in (2023, 2024):
+            year_sales = sales.loc[sales["date"].dt.year == year]
+            idx = stats.month_index(stats.daily_qty(year_sales, channel))
+            assert idx.get(month) > 1.0, (
+                f"{channel} {year}년 {month}월 지수가 평균 이하입니다: {idx.get(month):.3f}"
+            )
 
 
 def test_dow_profile_inflow_vs_local(period_a):
@@ -258,7 +384,7 @@ def test_dow_profile_inflow_vs_local(period_a):
 
 # ── 이상치 특성 ───────────────────────────────────────────────────────
 def test_month_first_spike(real_data):
-    """매월 1일 카지노 식음 판매량 스파이크 약 1.6배 — robust 정규화의 근거."""
+    """매월 1일 카지노 식음 판매량 스파이크 약 1.45배 — robust 정규화의 근거."""
     sales = real_data["sales"]
     daily = (
         sales.loc[sales["channel"] == S.CH_CASINO]
@@ -266,7 +392,7 @@ def test_month_first_spike(real_data):
     )
     first = daily.loc[daily["is_month_first"], "qty"].mean()
     rest = daily.loc[~daily["is_month_first"], "qty"].mean()
-    assert first / rest == pytest.approx(1.62, abs=0.05)
+    assert first / rest == pytest.approx(EXPECTED_MONTH_FIRST_SPIKE, abs=0.05)
 
 
 # ── 스코어 분포 위생 ──────────────────────────────────────────────────
@@ -372,6 +498,77 @@ def test_cai_can_substitute_cii(period_a):
     v = inflow_mod.cai_validity(ars_a, sales_a)
     assert v["n_days"] == 31
     assert v["pearson"] > 0.6, f"CAI 대체 타당성 부족: r={v['pearson']:.3f}"
+
+
+# ── 구간 C: recv_total 없는 ARS 에서의 CII 폴백 ────────────────────────
+@pytest.fixture(scope="module")
+def period_c(real_data):
+    """구간 C(2026 상반기) — ARS 만 있고 총접수자 컬럼이 없는 구간."""
+    ars = real_data["ars"]
+    ars_c = ars.loc[ars["date"].dt.year == 2026]
+    if len(ars_c) < 20:
+        pytest.skip("구간 C 데이터가 부족합니다")
+    return ars_c
+
+
+def test_period_a_uses_pressure_signal(period_a):
+    """구간 A 는 recv_total 이 있으므로 3축 CII 를 써야 한다."""
+    ars_a, _ = period_a
+    assert inflow_mod.has_pressure_signal(ars_a)
+    assert bool(inflow_mod.compute_cii(ars_a)["pressure_signal"].iloc[0]) is True
+
+
+def test_period_c_falls_back_without_recv_total(period_c):
+    """총접수자가 없어도 CII 가 계산되고, 폴백이었음이 드러나야 한다.
+
+    없는 컬럼을 0 으로 채워 3축 계산을 강행하면 '접수자 0명'이라는 거짓 신호가
+    지수의 35% 를 차지한다. 축을 빼고 재정규화하는 것이 정직한 처리다.
+    """
+    assert not inflow_mod.has_pressure_signal(period_c)
+
+    cii = inflow_mod.compute_cii(period_c)
+    assert len(cii) == len(period_c)
+    assert bool(cii["pressure_signal"].iloc[0]) is False
+    assert cii["cii"].between(0, 100).all()
+    assert cii["cii"].std() >= 5, "폴백 CII 가 한 값에 뭉쳐 있음"
+    assert cii["cii"].notna().all()
+
+
+def test_period_c_cii_ignores_stale_pressure_weights(period_c):
+    """3축 가중치를 넘겨도 폴백 경로가 안전한지 (사이드바 슬라이더 대응).
+
+    wsum 이 parts 에 없는 키를 버리고 남은 가중치로 재정규화하므로, 결과가
+    2축 전용 가중치를 넘겼을 때와 같아야 한다.
+    """
+    with_stale = inflow_mod.compute_cii(period_c, S.INFLOW_WEIGHTS)
+    with_clean = inflow_mod.compute_cii(period_c, S.INFLOW_WEIGHTS_NO_PRESSURE)
+    assert np.allclose(with_stale["cii"], with_clean["cii"], atol=1e-9)
+
+
+def test_corr_table_skips_all_nan_metric(period_c, real_data):
+    """값이 전부 결측인 지표는 상관표에 실리지 않아야 한다.
+
+    컬럼 존재만 확인하면 recv_total 행이 NaN 상관계수로 표에 남는다.
+    """
+    sales = real_data["sales"]
+    corr = stats.corr_table(period_c, sales)
+    # 구간 C 는 판매와 겹치는 날이 없으므로 표 자체가 비어야 정상이다
+    if not corr.empty:
+        assert "recv_total" not in set(corr["metric"])
+        assert corr["pearson"].notna().all()
+
+
+def test_headline_corr_falls_back_to_tickets(period_a):
+    """recv_total 이 빠진 상관표에서는 tickets 로 배너 지표가 내려가는지."""
+    ars_a, sales_a = period_a
+    corr = stats.corr_table(ars_a, sales_a)
+    assert stats.headline_metric(corr) == "recv_total"
+
+    without = corr.loc[corr["metric"] != "recv_total"]
+    assert stats.headline_metric(without) == "tickets"
+    head = stats.headline_corr(without)
+    assert head[S.CH_CASINO] == pytest.approx(0.796, abs=TOL)
+    assert stats.headline_corr(corr.iloc[0:0]) == {}
 
 
 # ── 요일 교란 통제 (README 가설 검증 절의 편상관 수치) ─────────────────

@@ -31,19 +31,36 @@ def deployed(tmp_path, monkeypatch):
 
 def test_sales_and_ars_come_from_sample(deployed):
     data, sources = deployed
-    assert sources["ars"] == S.SRC_SAMPLE, f"ARS 출처가 {sources['ars']}"
-    assert sources["sales"] == S.SRC_SAMPLE, f"판매 출처가 {sources['sales']}"
-    assert sources["ars"] in S.REAL_SOURCES
-    assert sources["sales"] in S.REAL_SOURCES
+    for key in ("ars", "sales", "golf"):
+        assert sources[key] == S.SRC_SAMPLE, f"{key} 출처가 {sources[key]}"
+        assert sources[key] in S.REAL_SOURCES
 
 
 def test_sample_is_not_truncated(deployed):
-    """축약본이 연간 전체를 담고 있는지 — 월 인덱스 분석에 필요하다."""
+    """축약본이 2년 전체를 담고 있는지 — 월 인덱스 분석에 필요하다."""
     data, _ = deployed
     sales = data["sales"]
-    assert len(sales) == 145_150
+    assert len(sales) == 284_866
     assert sales["date"].dt.month.nunique() == 12
-    assert len(data["ars"]) == 62
+    assert set(sales["date"].dt.year) == {2023, 2024}
+    assert len(data["ars"]) == 212
+    assert len(data["golf"]) == 2_703
+
+
+def test_sample_ars_carries_period_a(deployed):
+    """축약본 ARS 에 2024-12 이 남아 있는지 — 배포판 구간 A 의 전제.
+
+    2026년 ARS 전처리본에는 2024-12 이 없다. 이 31일이 빠지면 판매 데이터와
+    겹치는 날이 0일이 되어 아래 두 테스트(r=0.80, D+1)가 근거를 잃는다.
+    """
+    data, _ = deployed
+    ars = data["ars"]
+    period_a = ars.loc[ars["date"].between(
+        pd.Timestamp("2024-12-01"), pd.Timestamp("2024-12-31")
+    )]
+    assert len(period_a) == 31
+    # 총 접수자까지 살아 있어야 배너 기준축이 recv_total 로 유지된다
+    assert period_a["recv_total"].notna().all()
 
 
 def test_headline_correlation_survives_deployment(deployed):
@@ -70,13 +87,17 @@ def test_lag_finding_survives_deployment(deployed):
 
 
 def test_seasonality_survives_deployment(deployed):
-    """월 인덱스(특산품 9월 1.48 / 룸서비스 1월 1.23) — 기간을 자르지 않은 이유."""
+    """월 인덱스(특산품 9월 1.43 / 룸서비스 1월 1.21) — 기간을 자르지 않은 이유.
+
+    2023년이 더해지며 2년 평균으로 희석됐다(9월 1.48→1.43, 1월 1.23→1.21).
+    피크 월은 그대로이고 두 해 모두에서 재현된다.
+    """
     data, _ = deployed
     sales = data["sales"]
     local = stats.month_index(stats.daily_qty(sales, S.CH_LOCAL))
     room = stats.month_index(stats.daily_qty(sales, S.CH_ROOM))
-    assert local.get(9) == pytest.approx(1.48, abs=0.02)
-    assert room.get(1) == pytest.approx(1.23, abs=0.02)
+    assert local.get(9) == pytest.approx(1.43, abs=0.02)
+    assert room.get(1) == pytest.approx(1.21, abs=0.02)
 
 
 def test_api_datasets_fall_back_without_key(deployed):
@@ -94,7 +115,7 @@ def test_no_real_data_at_all(tmp_path, monkeypatch):
     monkeypatch.setattr(S, "SAMPLE_DIR", tmp_path / "z")
     monkeypatch.setattr(S, "MOCK_DIR", tmp_path / "w")
     data, sources = loaders.load_all_impl()
-    for key in ("ars", "sales", "demo", "merchants"):
+    for key in ("ars", "sales", "golf", "demo", "merchants"):
         assert not data[key].empty, f"{key} 가 비었습니다 — 폴백 실패"
         assert sources[key] == S.SRC_EMBEDDED
     # 내장 데이터로도 스코어링이 돌아야 한다

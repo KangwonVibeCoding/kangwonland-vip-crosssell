@@ -54,7 +54,7 @@ data, sources = load_all()
 
 fallback_keys = [k for k, v in sources.items() if v not in S.REAL_SOURCES]
 if fallback_keys:
-    names = {"ars": "ARS 예약", "sales": "판매 3종",
+    names = {"ars": "ARS 예약", "sales": "판매 3종", "golf": "골프장 이용객",
              "demo": "성별·연령", "merchants": "가맹점"}
     st.warning(
         f"{', '.join(names.get(k, k) for k in fallback_keys)} 데이터를 데모용 "

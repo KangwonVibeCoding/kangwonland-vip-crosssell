@@ -117,12 +117,23 @@ def corr_table(ars: pd.DataFrame, sales: pd.DataFrame) -> pd.DataFrame:
     for metric, label in inflow_metrics.items():
         if metric not in ars_idx.columns:
             continue
+        # 컬럼은 있는데 값이 전부 결측인 경우가 있다 — 2026년 ARS 전처리본에는
+        # recv_total 이 없어서 concat 후 그 구간이 통째로 NaN 이다. 컬럼 존재만
+        # 확인하면 상관계수 NaN 행이 표에 그대로 실린다.
+        if pd.to_numeric(ars_idx[metric], errors="coerce").notna().sum() < 3:
+            continue
         for channel in S.CHANNELS:
             for vip_only in (False, True):
                 qty = daily_qty(sales, channel, vip_only=vip_only)
                 x, y = align(ars_idx[metric], qty)
-                if len(x) < 3:
+                # align 은 날짜만 맞춘다. 값이 결측인 날은 상관 계산에서 빠지므로
+                # 유효 쌍 수로 판단해야 n_days 가 정직해진다.
+                pairs = pd.concat([x, y], axis=1).apply(
+                    pd.to_numeric, errors="coerce"
+                ).dropna()
+                if len(pairs) < 3:
                     continue
+                x, y = pairs.iloc[:, 0], pairs.iloc[:, 1]
                 rows.append({
                     "metric": metric,
                     "metric_label": label,
@@ -137,11 +148,30 @@ def corr_table(ars: pd.DataFrame, sales: pd.DataFrame) -> pd.DataFrame:
 
 
 def headline_corr(corr: pd.DataFrame) -> dict[str, float]:
-    """가설 검증 배너용 — 채널별 대표 상관계수 (recv_total 기준, 전체 상품)."""
+    """가설 검증 배너용 — 채널별 대표 상관계수 (전체 상품).
+
+    기준축은 recv_total(내국인 총 접수자)이다. 다만 2026년 ARS 전처리본에는
+    그 컬럼이 없어 corr_table 에서 통째로 빠지므로, 없으면 tickets 로 내려간다
+    — 배너가 빈 값으로 뜨는 것보다 근거 지표를 바꿔 표시하는 편이 낫다.
+    호출자는 `headline_metric()` 으로 어느 축이 쓰였는지 확인할 수 있다.
+    """
     if corr.empty:
         return {}
-    base = corr.loc[(corr["metric"] == "recv_total") & (~corr["vip_only"])]
+    metric = headline_metric(corr)
+    if metric is None:
+        return {}
+    base = corr.loc[(corr["metric"] == metric) & (~corr["vip_only"])]
     return {r.channel: float(r.pearson) for r in base.itertuples()}
+
+
+def headline_metric(corr: pd.DataFrame) -> str | None:
+    """headline_corr 가 실제로 사용한 유입 지표명. 배지 표기에 쓴다."""
+    if corr.empty:
+        return None
+    for metric in ("recv_total", "tickets"):
+        if (corr["metric"] == metric).any():
+            return metric
+    return None
 
 
 def channel_cross_corr(sales: pd.DataFrame) -> pd.DataFrame:

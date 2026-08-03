@@ -105,8 +105,17 @@ def add_date_parts(df: pd.DataFrame) -> pd.DataFrame:
     """date 컬럼에서 파생 시간 컬럼을 만든다.
 
     dow 는 월=0 … 일=6 (pandas 규약). 화면 표기는 DOW_NAMES 로 변환한다.
+
+    ⚠ 파싱 실패 행을 **파생 컬럼을 만들기 전에** 버린다. assign 안의 표현식은
+    전부 먼저 평가되므로, 뒤에서 dropna 를 해도 `isocalendar().week` 가 NA 를
+    int64 로 변환하려다 예외가 난다 (골프 원본의 빈 패딩 행 47개가 이 경로를
+    처음 밟았다).
     """
     d = pd.to_datetime(df["date"], errors="coerce")
+    keep = d.notna()
+    if not keep.all():
+        df = df.loc[keep]
+        d = d.loc[keep]
     return df.assign(
         date=d,
         dow=d.dt.dayofweek,
@@ -115,7 +124,7 @@ def add_date_parts(df: pd.DataFrame) -> pd.DataFrame:
         year=d.dt.year,
         iso_week=d.dt.isocalendar().week.astype("int64"),
         is_month_first=(d.dt.day == 1),
-    ).dropna(subset=["date"])
+    )
 
 
 def normalize_ars(df: pd.DataFrame) -> pd.DataFrame:
@@ -125,12 +134,25 @@ def normalize_ars(df: pd.DataFrame) -> pd.DataFrame:
       - winners(총 당첨자)는 일일 정원 캡(최대 2,999)이라 거의 상수 → 유입
         지표로는 recv_total / tickets 를 쓴다.
       - buy_rate 는 % 단위(52.85)로 들어오므로 0~1 로 환산한다.
-        (검증: buy_rate == tickets / winners 가 실데이터 62행 전부 일치)
+        (검증: buy_rate == tickets / winners 가 2024-12 실데이터 31행 일치)
+
+    ⚠ 파일마다 컬럼 구성이 다르다. 2024-12 원본에는 총접수자·모바일 계열이
+    모두 있지만 2026년 전처리본(ars_merged.csv)에는 winners/tickets/buy_rate
+    3개뿐이다. 두 파일을 concat 하면 recv_* 가 부분 결측이 되므로, **없는
+    컬럼은 0 이 아니라 결측(NA)으로 만든다.** 0 으로 채우면 '접수자 0명'이라는
+    거짓이 생겨 정규화 스케일과 상관계수가 통째로 망가진다.
     """
     df, _ = rename_columns(df)
     int_cols = ("recv_total", "recv_ars", "recv_mobile", "winners",
                 "win_ars", "win_mobile", "tickets")
     out = df.assign(**{c: _to_int(df[c]) for c in int_cols if c in df.columns})
+
+    # 없는 선택 컬럼은 float 결측으로 채워 둔다 — 이후 계산이 조건 분기 없이
+    # NaN 전파로 자연스럽게 처리된다.
+    for col in S.ARS_OPTIONAL:
+        if col not in out.columns:
+            out = out.assign(**{col: pd.Series(float("nan"), index=out.index,
+                                               dtype="float64")})
 
     if "buy_rate" in out.columns:
         rate = _to_float(out["buy_rate"])
@@ -143,17 +165,42 @@ def normalize_ars(df: pd.DataFrame) -> pd.DataFrame:
     out = add_date_parts(out)
 
     winners = out["winners"].replace(0, pd.NA)
+    recv_total = pd.to_numeric(out["recv_total"], errors="coerce")
+    recv_mobile = pd.to_numeric(out["recv_mobile"], errors="coerce")
     return out.assign(
-        # 예약 경쟁률 — 정원 대비 수요 과열도
-        compete_ratio=(out["recv_total"] / winners).astype("float64"),
+        recv_total=recv_total,
+        # 예약 경쟁률 — 정원 대비 수요 과열도. 총접수자가 없는 구간은 NaN.
+        compete_ratio=(recv_total / winners).astype("float64"),
         # 디지털 비중. 역수가 고연령 프록시 (실측 ARS 비중 16.5~20.7%)
-        mobile_share=(
-            out["recv_mobile"] / out["recv_total"].replace(0, pd.NA)
-        ).astype("float64")
-        if "recv_mobile" in out.columns
-        else pd.NA,
+        mobile_share=(recv_mobile / recv_total.replace(0, pd.NA)).astype("float64"),
         is_capped=out["winners"] >= S.CAPACITY_CAP,
     ).sort_values("date").reset_index(drop=True)
+
+
+def normalize_golf(df: pd.DataFrame) -> pd.DataFrame:
+    """골프장 이용객 현황 표준화 (2021-03 ~ 2025-12).
+
+    원본 특성:
+      - 영업일자가 통째로 빈 행이 47개 있다 (파일 끝 패딩) → 날짜 결측은 버린다
+      - 영업장이 4종(그린피/카트대여/용품대여/드라이빙레인지)이라 날짜당 다중 행
+      - 영업상태 '휴장영업' 은 문을 닫은 날이다. 행을 지우지 않고 플래그로 남겨
+        호출자가 판단하게 한다 — 휴장일 분포 자체가 시즌 신호이기 때문이다.
+    """
+    df, _ = rename_columns(df)
+    out = df.assign(visitors=_to_int(df["visitors"]))
+    for col in ("season", "day_type", "dow_label", "golf_venue", "open_status"):
+        if col in out.columns:
+            out = out.assign(
+                **{col: out[col].astype("string").fillna("").str.strip()}
+            )
+        else:
+            out = out.assign(**{col: pd.Series([""] * len(out), dtype="string")})
+
+    out = add_date_parts(out)     # date 결측 행(빈 패딩)이 여기서 제거된다
+    return out.assign(
+        is_closed=out["open_status"].isin(S.GOLF_CLOSED_STATUSES)
+        .fillna(False).to_numpy(dtype=bool),
+    ).sort_values(["date", "golf_venue"]).reset_index(drop=True)
 
 
 def _stable_item_id(items: pd.Series, channel: str) -> pd.Series:

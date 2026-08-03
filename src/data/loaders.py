@@ -167,7 +167,49 @@ def _load_sales_impl() -> tuple[pd.DataFrame, str]:
     return pd.concat(frames, ignore_index=True), S.SRC_EMBEDDED
 
 
-# ── 3. 고객성별연령분석현황 (Open API) ─────────────────────────────────
+# ── 3. 골프장 이용객 현황 ──────────────────────────────────────────────
+# 판매 3종과 단위·기간이 달라 채널로 합치지 않고 별도 데이터셋으로 둔다.
+# (골프 2021-03~2025-12 vs 판매 2023-01~2024-12)
+_GOLF_PATTERNS = ("golf_visitors*.csv", "golf*.csv")
+
+
+def _golf_from_csv(directory: Path) -> pd.DataFrame | None:
+    for p in _csv_candidates(directory, _GOLF_PATTERNS):
+        try:
+            df = schema.normalize_golf(schema.read_csv_kr(p, dtype="string"))
+            if not df.empty:
+                return df
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _load_golf_impl() -> tuple[pd.DataFrame, str]:
+    cached = _read_parquet("golf")
+    if cached is not None:
+        return cached, S.SRC_PROCESSED
+
+    df = _golf_from_csv(S.RAW_DIR)
+    if df is not None:
+        _write_parquet("golf", df)
+        return df, S.SRC_RAW
+
+    sample = _read_sample("golf")
+    if sample is not None:
+        return sample, S.SRC_SAMPLE
+
+    df = _golf_from_csv(S.SAMPLE_DIR)
+    if df is not None:
+        return df, S.SRC_SAMPLE
+
+    df = _golf_from_csv(S.MOCK_DIR)
+    if df is not None:
+        return df, S.SRC_MOCK
+
+    return schema.normalize_golf(fallback.golf_df()), S.SRC_EMBEDDED
+
+
+# ── 4. 고객성별연령분석현황 (Open API) ─────────────────────────────────
 def _load_demographics_impl() -> tuple[pd.DataFrame, str]:
     cached = _read_parquet("demographics")
     if cached is not None:
@@ -207,7 +249,7 @@ def _load_demographics_impl() -> tuple[pd.DataFrame, str]:
     return schema.normalize_demographics(fallback.demographics_df()), S.SRC_EMBEDDED
 
 
-# ── 4. 하이원포인트 가맹점 (Open API) ──────────────────────────────────
+# ── 5. 하이원포인트 가맹점 (Open API) ──────────────────────────────────
 def _load_merchants_impl() -> tuple[pd.DataFrame, str]:
     cached = _read_parquet("merchants")
     if cached is not None:
@@ -280,17 +322,19 @@ def _cached(fn):
 
 load_ars = _cached(_load_ars_impl)
 load_sales = _cached(_load_sales_impl)
+load_golf = _cached(_load_golf_impl)
 load_demographics = _cached(_load_demographics_impl)
 load_merchants = _cached(_load_merchants_impl)
 
 
 def load_all_impl() -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
-    """4개 논리 데이터셋을 한 번에. 어떤 실패도 앱을 죽이지 않는다."""
+    """5개 논리 데이터셋을 한 번에. 어떤 실패도 앱을 죽이지 않는다."""
     frames: dict[str, pd.DataFrame] = {}
     sources: dict[str, str] = {}
     for key, fn in (
         ("ars", _load_ars_impl),
         ("sales", _load_sales_impl),
+        ("golf", _load_golf_impl),
         ("demo", _load_demographics_impl),
         ("merchants", _load_merchants_impl),
     ):
@@ -304,6 +348,7 @@ def load_all_impl() -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
                      for c, r in fallback.sales_by_channel().items()],
                     ignore_index=True,
                 ),
+                "golf": lambda: schema.normalize_golf(fallback.golf_df()),
                 "demo": lambda: schema.normalize_demographics(fallback.demographics_df()),
                 "merchants": lambda: schema.normalize_merchants(fallback.merchants_df()),
             }[key]

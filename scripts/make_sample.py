@@ -35,9 +35,35 @@ from src.data import loaders                            # noqa: E402
 TARGETS = (
     ("ars", loaders._load_ars_impl, "ars"),
     ("sales", loaders._load_sales_impl, "sales"),
+    ("golf", loaders._load_golf_impl, "golf"),
     ("demo", loaders._load_demographics_impl, "demographics"),
     ("merchants", loaders._load_merchants_impl, "merchants"),
 )
+
+
+# 구간 A(실측 조인)의 근거 기간. 축약본에 이 기간이 없으면 배포판에서 상관
+# r=0.80 배너와 특산품 D+1 래그가 통째로 사라진다.
+PERIOD_A_START = pd.Timestamp(S.PERIODS[S.PERIOD_A]["start"])
+PERIOD_A_END = pd.Timestamp(S.PERIODS[S.PERIOD_A]["end"])
+
+
+def guard_ars(df: pd.DataFrame) -> str | None:
+    """ARS 축약본이 구간 A 를 담고 있는지 검사. 문제가 있으면 사유를 반환한다.
+
+    ⚠ 이 가드가 존재하는 이유: `data/sample/ars.parquet` 은 2024-12 ARS 의
+    **유일한 사본**이다(원본 CSV 는 gitignore 되는 data/raw 에만 있고,
+    2026년 전처리본에는 2024-12 이 없다). raw 에서 2024-12 파일이 빠진 채로
+    이 스크립트를 돌리면 축약본을 2026년분으로 덮어써 복원 원천이 사라지고,
+    scripts/restore_ars_2024.py 도 더는 쓸 수 없게 된다.
+    """
+    covered = df.loc[df["date"].between(PERIOD_A_START, PERIOD_A_END)]
+    if len(covered) >= 28:
+        return None
+    return (
+        f"구간 A({PERIOD_A_START:%Y-%m} ) 가 {len(covered)}일뿐입니다 — "
+        "덮어쓰면 기존 축약본의 2024-12 사본이 사라집니다. "
+        "먼저 python scripts/restore_ars_2024.py 를 실행하세요"
+    )
 
 
 def human(size: int) -> str:
@@ -72,6 +98,11 @@ def main() -> int:
         if df.empty:
             skipped.append((name, "비어 있음"))
             continue
+        if key == "ars":
+            problem = guard_ars(df)
+            if problem:
+                skipped.append((name, problem))
+                continue
 
         dest = S.SAMPLE_DIR / f"{name}.parquet"
         df.to_parquet(dest, index=False, compression="snappy")

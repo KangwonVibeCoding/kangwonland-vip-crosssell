@@ -189,6 +189,69 @@ def sales_by_channel() -> dict[str, pd.DataFrame]:
     return {ch: sales_df(ch) for ch in ("casino_fnb", "roomservice", "local_goods")}
 
 
+# ── 골프장 이용객 현황 ─────────────────────────────────────────────────
+# 실측 구조를 모사한다: 영업장 4종, 시즌구분에 따른 이용객 편차, 겨울 정기휴장.
+# 골프장은 4월~11월만 운영하므로(실측 최이른 개장 3-19, 최늦 폐장 12-07)
+# 12~2월은 아예 행이 없다 — 이 계절 공백 자체가 데이터의 특징이다.
+_GOLF_VENUE_BASE = {
+    "그린피": 140, "카트대여": 35, "용품대여": 8, "드라이빙레인지": 22,
+}
+# (시작월, 시작일, 종료월, 종료일, 시즌명, 배율)
+_GOLF_SEASONS: tuple[tuple[int, int, int, int, str, float], ...] = (
+    (4, 1, 5, 15, "비수기A", 0.72),
+    (5, 16, 6, 30, "준성수기A", 0.95),
+    (7, 1, 8, 20, "성수기A", 1.34),
+    (8, 21, 9, 30, "성수기B", 1.21),
+    (10, 1, 10, 31, "성수기C", 1.28),
+    (11, 1, 11, 30, "비수기B", 0.66),
+)
+_GOLF_DOW_INDEX = (0.82, 0.85, 0.88, 0.91, 1.18, 1.42, 1.31)   # 월…일
+_GOLF_YEAR = 2024
+
+
+def _golf_season(month: int, day: int) -> tuple[str, float] | None:
+    for m0, d0, m1, d1, name, mult in _GOLF_SEASONS:
+        if (month, day) >= (m0, d0) and (month, day) <= (m1, d1):
+            return name, mult
+    return None
+
+
+def golf_df() -> pd.DataFrame:
+    """골프장 이용객 현황 — 원본 한글 컬럼 형태 (표준화는 로더가 한다)."""
+    rows: list[dict] = []
+    date = dt.date(_GOLF_YEAR, 4, 1)
+    end = dt.date(_GOLF_YEAR, 11, 30)
+    while date <= end:
+        season = _golf_season(date.month, date.day)
+        if season is None:
+            date += dt.timedelta(days=1)
+            continue
+        season_name, mult = season
+        dow = date.weekday()
+        # 매월 첫 월요일은 정기휴장 (실측에 '정기휴장(골프)' 시즌구분이 있다)
+        closed = dow == 0 and date.day <= 7
+        day_type = ("휴장" if closed
+                    else "주말" if dow == 5
+                    else "일요일" if dow == 6
+                    else "금요일" if dow == 4
+                    else "주중")
+        for venue, base in _GOLF_VENUE_BASE.items():
+            qty = 1 if closed else max(
+                int(round(base * mult * _GOLF_DOW_INDEX[dow])), 1
+            )
+            rows.append({
+                "영업일자": date.isoformat(),
+                "시즌구분": "정기휴장(골프)" if closed else season_name,
+                "주중주말": day_type,
+                "요일": "월화수목금토일"[dow],
+                "영업장": venue,
+                "영업상태": "휴장영업" if closed else "정상영업",
+                "이용인원": qty,
+            })
+        date += dt.timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
 # ── 고객성별연령분석현황 ───────────────────────────────────────────────
 _DEMOGRAPHICS = {
     "성별": ["남"] * 5 + ["여"] * 5,

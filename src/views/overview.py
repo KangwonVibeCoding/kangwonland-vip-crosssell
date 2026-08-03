@@ -61,13 +61,20 @@ def render(ctx: dict) -> None:
             (S.CHANNEL_LABEL[ch], f"{head[ch]:.3f}")
             for ch in S.CHANNELS if ch in head
         ]
+        # 기준축은 총 접수자다. 다만 ARS 전처리본에 그 컬럼이 없는 구간에서는
+        # 입장권 구매 건수로 내려간다 — 어느 지표로 잰 상관인지 배지에 드러낸다.
+        metric = stats.headline_metric(corr)
+        metric_label = {
+            "recv_total": "내국인 총 접수자",
+            "tickets": "입장권 구매 건수",
+        }.get(metric, "유입 지표")
         C.hero_banner(
             headline=f"카지노 유입 ↔ 리조트 소비 상관 r = {top:.2f}",
             sub="ARS 예약 유입이 클수록 리조트 내 F&B 소비가 함께 커진다 — "
                 "교차판매 가설이 실데이터로 확인된다.",
             stats_pairs=pairs,
             badge="실측 조인",
-            badge_detail=f"{n_days}일 날짜 조인",
+            badge_detail=f"{n_days}일 날짜 조인 · {metric_label} 기준",
         )
     else:
         C.hero_banner(
@@ -103,12 +110,16 @@ def render(ctx: dict) -> None:
         C.kpi_card("입장권 구매 건수", C.fmt_int(tickets_now, "건"), delta, direction,
                    note="당첨자 실구매" if tickets_now else "이 구간 ARS 없음")
 
+    # 예약 경쟁률 = 총 접수자 / 당첨자. 2026년 ARS 전처리본에는 총 접수자
+    # 컬럼이 없어 이 구간에서는 NaN 이 되고 카드가 '—' 로 뜬다. 값이 없는
+    # 이유를 note 에 적어 두어야 "지표가 깨졌다"로 읽히지 않는다.
     compete_now = float(ars["compete_ratio"].mean()) if not ars.empty else None
     compete_prev = float(prev_ars["compete_ratio"].mean()) if not prev_ars.empty else None
     with cols[1]:
         delta, direction = C.point_delta(compete_now, compete_prev, 2, "배")
+        has_compete = compete_now is not None and pd.notna(compete_now)
         C.kpi_card("예약 경쟁률", C.fmt_float(compete_now, 2, "배"), delta, direction,
-                   note="접수자 / 당첨자")
+                   note="접수자 / 당첨자" if has_compete else "이 구간 총 접수자 미제공")
 
     vrb_now = float(vrb["vrb"].sum()) if not vrb.empty else None
     estimated = bool(vrb["is_estimated"].any()) if not vrb.empty else False

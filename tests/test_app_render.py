@@ -113,7 +113,11 @@ def test_single_channel_keeps_entity_colors():
 
 
 def test_period_c_has_no_sales_data():
-    """구간 C(2026-05)는 판매 데이터가 없다 → 안내로 graceful 처리."""
+    """구간 C(2026 상반기)는 판매 데이터가 없다 → 안내로 graceful 처리.
+
+    이 구간은 ARS 전처리본에 총 접수자 컬럼도 없어 CII 가 2축으로 폴백한다.
+    지수 계산 경로가 통째로 달라지므로 렌더까지 확인해야 한다.
+    """
     at = _run(flt_period=S.PERIOD_C)
     assert not at.exception
     assert not [e.value for e in at.error]
@@ -121,7 +125,7 @@ def test_period_c_has_no_sales_data():
 
 
 def test_period_b_full_year():
-    """구간 B(2024 전체) — 요일 브릿지 경로."""
+    """구간 B(2023~2024) — 요일 브릿지 경로."""
     at = _run(flt_period=S.PERIOD_B)
     assert not at.exception
     assert not [e.value for e in at.error]

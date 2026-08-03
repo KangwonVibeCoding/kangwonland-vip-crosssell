@@ -18,6 +18,18 @@ from config import settings as S
 from src.analysis import scoring, stats
 
 
+def has_pressure_signal(ars: pd.DataFrame) -> bool:
+    """recv_total(총 접수자)이 실제로 쓸 만큼 존재하는지.
+
+    2024-12 원본에는 있고 2026년 전처리본에는 없다. 컬럼 존재 여부만 보면
+    concat 된 프레임에서 항상 True 가 나오므로 **유효값 개수**로 판단한다.
+    3개 미만이면 정규화가 무의미하므로 없는 것으로 취급한다.
+    """
+    if ars.empty or "recv_total" not in ars.columns:
+        return False
+    return int(pd.to_numeric(ars["recv_total"], errors="coerce").notna().sum()) >= 3
+
+
 def compute_cii(ars: pd.DataFrame,
                 weights: dict[str, float] | None = None) -> pd.DataFrame:
     """ARS 기반 카지노 유입 강도 지수 (0~100).
@@ -25,25 +37,44 @@ def compute_cii(ars: pd.DataFrame,
     ⚠ `winners`(총 당첨자)는 쓰지 않는다. 실측 결과 일일 정원 캡(최대 2,999)에
     묶여 CV 0.178 로 거의 상수이므로, 정규화하면 의미 없는 노이즈만 만든다.
     변동을 담고 있는 신호는 recv_total(CV 0.372)과 tickets(CV 0.302)다.
+
+    ⚠ 2026년 ARS 전처리본에는 recv_total 이 없다. 그 구간에서는 수요 압력 축을
+    빼고 demand/convert 2축으로 폴백한다 — 없는 컬럼을 0 으로 채워 계산하면
+    "그 날 접수자가 0명"이라는 거짓 신호가 지수에 그대로 들어간다.
+    `pressure_signal` 컬럼으로 어느 방식이었는지 화면에 드러낼 수 있게 한다.
     """
-    weights = weights or S.INFLOW_WEIGHTS
     if ars.empty:
         return pd.DataFrame(columns=["date", "cii", "cii_ma7", "grade", "source"])
 
     df = ars.sort_values("date").reset_index(drop=True)
-    parts = {
-        "demand": scoring.nrm(df["tickets"]),          # 실제 입장 전환 건수
-        "pressure": scoring.nrm(df["recv_total"]),     # 수요 압력
-        "convert": scoring.nrm(df["buy_rate"]),        # 당첨자 → 구매 전환
-    }
+    use_pressure = has_pressure_signal(df)
+
+    if use_pressure:
+        weights = weights or S.INFLOW_WEIGHTS
+        parts = {
+            "demand": scoring.nrm(df["tickets"]),          # 실제 입장 전환 건수
+            "pressure": scoring.nrm(df["recv_total"]),     # 수요 압력
+            "convert": scoring.nrm(df["buy_rate"]),        # 당첨자 → 구매 전환
+        }
+    else:
+        weights = weights or S.INFLOW_WEIGHTS_NO_PRESSURE
+        parts = {
+            "demand": scoring.nrm(df["tickets"]),
+            "convert": scoring.nrm(df["buy_rate"]),
+        }
+    # 호출자(사이드바 슬라이더)가 3축 가중치를 넘겨도 안전하다 — wsum 이
+    # parts 에 없는 키를 버리고 남은 가중치로 다시 정규화한다.
     cii = scoring.wsum(parts, weights)
-    out = df[["date", "dow", "dow_name", "month", "recv_total", "winners",
-              "tickets", "buy_rate", "compete_ratio", "is_capped"]].copy()
+    cols = [c for c in ("date", "dow", "dow_name", "month", "recv_total", "winners",
+                        "tickets", "buy_rate", "compete_ratio", "is_capped")
+            if c in df.columns]
+    out = df[cols].copy()
     return out.assign(
         cii=cii.to_numpy(),
         cii_ma7=cii.rolling(7, min_periods=1).mean().to_numpy(),
         grade=scoring.grade(cii).to_numpy(),
         source="CII",
+        pressure_signal=use_pressure,
     )
 
 

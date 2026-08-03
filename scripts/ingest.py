@@ -29,11 +29,14 @@ from src.data import schema                            # noqa: E402
 # 파일명이 신뢰할 수 없으므로 내용으로 판정한다. 판정 순서가 중요하다:
 # 더 구체적인(고유 컬럼을 가진) 규칙을 먼저 둔다.
 SIG_ARS = "당첨자입장권구매율"
+SIG_ARS_EN = "purchaserate"              # 전처리본(ars_merged.csv)의 영문 헤더
+SIG_GOLF = "이용인원"                     # 골프장만 보유 (판매는 '판매수량')
 SIG_VENUE_ID = "영업장아이디id"          # 카지노 식음만 보유
 SIG_ITEM_ID = "상품아이디id"
 SIG_DISCOUNT = "할인구분여부"
 
 KIND_ARS = "ars"
+KIND_GOLF = "golf_visitors"
 KIND_CASINO = "casino_fnb"
 KIND_ROOM = "roomservice"
 KIND_LOCAL = "local_goods"
@@ -46,8 +49,10 @@ def classify(df: pd.DataFrame) -> str | None:
     """헤더(+필요시 영업장명 값)로 데이터셋 종류를 판정한다."""
     keys = {schema.normalize_key(c) for c in df.columns}
 
-    if SIG_ARS in keys:
+    if SIG_ARS in keys or SIG_ARS_EN in keys:
         return KIND_ARS
+    if SIG_GOLF in keys:
+        return KIND_GOLF
     if SIG_VENUE_ID in keys:
         return KIND_CASINO
 
@@ -92,11 +97,19 @@ def date_span(df: pd.DataFrame) -> tuple[str, str] | None:
 
 
 def target_name(kind: str, span: tuple[str, str] | None) -> str:
-    """출력 파일명. ARS 는 여러 파일이 공존하므로 기간을 반드시 붙인다."""
+    """출력 파일명. ARS 는 여러 파일이 공존하므로 기간을 반드시 붙인다.
+
+    ⚠ 다른 종류는 `{kind}_{시작연도}.csv` 라서 같은 해 파일이 두 개 들어오면
+    뒤엣것이 앞엣것을 덮어쓴다. 여러 해가 하나로 합쳐진 `*_merged.csv` 는
+    이 함수를 거치지 않고 이미 data/raw 에 있는 파일들이다.
+    """
     if kind == KIND_ARS:
         if span is None:
             return "ars_unknown.csv"
         return f"ars_{span[0]}_{span[1]}.csv"
+    if span and span[0][:4] != span[1][:4]:
+        # 여러 해에 걸친 파일은 연도 하나로 이름 지으면 덮어쓰기 사고가 난다
+        return f"{kind}_{span[0]}_{span[1]}.csv"
     year = span[0][:4] if span else "unknown"
     return f"{kind}_{year}.csv"
 
