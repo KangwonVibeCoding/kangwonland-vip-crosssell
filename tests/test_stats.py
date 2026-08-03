@@ -372,3 +372,90 @@ def test_cai_can_substitute_cii(period_a):
     v = inflow_mod.cai_validity(ars_a, sales_a)
     assert v["n_days"] == 31
     assert v["pearson"] > 0.6, f"CAI 대체 타당성 부족: r={v['pearson']:.3f}"
+
+
+# ── 요일 교란 통제 (README 가설 검증 절의 편상관 수치) ─────────────────
+# 원 상관 0.801 은 그대로 방어되지 않는다. 토요일엔 유입도 매출도 많으므로 요일이
+# 양변을 동시에 밀어올리는 공통 원인일 수 있다. 요일 더미로 회귀한 잔차끼리의
+# 상관(편상관)을 고정해 둔다 — 절반 이상이 주말 효과였다는 사실이 발표의 근거다.
+#
+# 계산 근거: scripts/diagnose_confound.py (부트스트랩 CI·순열검정 p 포함)
+EXPECTED_PARTIAL_CORR = {
+    S.CH_CASINO: 0.370,   # 0.801 에서 하락. p=0.044 로 경계선
+    S.CH_ROOM: 0.558,     # 0.740 에서 하락. p=0.0015 로 유일하게 견고
+    S.CH_LOCAL: 0.176,    # 0.380 에서 하락. p=0.357 — 유의하지 않다
+}
+
+
+def _residual_on_dow(y: np.ndarray, dow: np.ndarray) -> np.ndarray:
+    """요일로 설명되는 변동을 제거한 잔차. 더미는 6개(월요일이 기준 범주)."""
+    X = np.column_stack([np.ones(len(y))]
+                        + [(dow == d).astype(float) for d in range(1, 7)])
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return y - X @ beta
+
+
+def test_partial_corr_controlling_dow(period_a):
+    """요일을 통제해도 남는 상관 — README 가 인용하는 수치."""
+    ars_a, sales_a = period_a
+    for channel, expected in EXPECTED_PARTIAL_CORR.items():
+        x_s, y_s = stats.align(
+            ars_a.set_index("date")["recv_total"], stats.daily_qty(sales_a, channel)
+        )
+        dow = x_s.index.dayofweek.to_numpy()
+        got = stats.pearson(
+            _residual_on_dow(x_s.to_numpy(float), dow),
+            _residual_on_dow(y_s.to_numpy(float), dow),
+        )
+        assert got == pytest.approx(expected, abs=0.01), (
+            f"{channel} 편상관 {got:.3f} != {expected}"
+        )
+
+
+def test_roomservice_is_the_robust_channel(period_a):
+    """요일 통제 후에는 룸서비스가 카지노 식음보다 강하다 — 순서가 뒤집힌다.
+
+    원 상관만 보면 카지노 식음(0.801) > 룸서비스(0.740) 이지만, 요일 효과를 빼면
+    반대가 된다. 요일은 마케팅으로 바꿀 수 없는 변수이므로 통제 후에 남는 관계가
+    실제 개입 여지다 — 교차판매 1순위를 룸서비스로 정한 근거.
+    """
+    assert EXPECTED_PARTIAL_CORR[S.CH_ROOM] > EXPECTED_PARTIAL_CORR[S.CH_CASINO]
+
+    ars_a, sales_a = period_a
+    got = {}
+    for channel in (S.CH_CASINO, S.CH_ROOM):
+        x_s, y_s = stats.align(
+            ars_a.set_index("date")["recv_total"], stats.daily_qty(sales_a, channel)
+        )
+        dow = x_s.index.dayofweek.to_numpy()
+        got[channel] = stats.pearson(
+            _residual_on_dow(x_s.to_numpy(float), dow),
+            _residual_on_dow(y_s.to_numpy(float), dow),
+        )
+    assert got[S.CH_ROOM] > got[S.CH_CASINO], (
+        f"요일 통제 후 순서가 뒤집히지 않았습니다: {got}"
+    )
+
+
+def test_local_goods_sunday_spike_carries_the_d1_claim(period_a):
+    """D+1 주장의 실제 근거 — 특산품만 토요일 저조 → 일요일 급등.
+
+    래그 상관의 D+1(0.467) 대 D+0(0.370) 차이는 n≈30 에서 통계적으로 구별되지
+    않는다(부트스트랩 CI 가 0을 포함). 주장을 지탱하는 것은 이 요일 대비다.
+    """
+    ars_a, sales_a = period_a
+    SAT, SUN = 5, 6
+
+    local = stats.dow_index(stats.daily_qty(sales_a, S.CH_LOCAL))
+    assert local[SAT] < 1.0, "특산품 토요일이 평균 이하여야 한다"
+    assert local[SUN] / local[SAT] > 1.5, "토→일 급등 폭이 근거의 핵심"
+
+    # 다른 채널은 토·일 모두 높다 — 특산품만 일요일에 몰린다는 것이 요점
+    for channel in (S.CH_CASINO, S.CH_ROOM):
+        d = stats.dow_index(stats.daily_qty(sales_a, channel))
+        assert d[SAT] > 1.0, f"{channel} 토요일은 평균 이상이어야 한다"
+        assert d[SUN] / d[SAT] < 1.2, f"{channel} 은 특산품 같은 급등이 없어야 한다"
+
+    # 유입은 토요일이 피크 — 판매가 하루 뒤인 구조
+    ars_dow = stats.dow_index(ars_a.set_index("date")["tickets"])
+    assert int(ars_dow.idxmax()) == SAT
