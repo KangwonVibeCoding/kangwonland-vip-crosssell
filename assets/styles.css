@@ -1,7 +1,13 @@
 /* 강원랜드 VIP 교차판매 대시보드 — 커스텀 스타일
  *
- * 색상은 src/ui/theme.py 의 값과 일치시킨다. 라이트/다크 양방향을 지원하되
- * 다크는 자동 반전이 아니라 같은 램프에서 별도로 고른 값이다.
+ * 색상은 src/ui/theme.py 의 값과 일치시킨다.
+ *
+ * ⚠ 라이트 단일 테마다. 다크 대응을 넣지 않는다 —
+ * `.streamlit/config.toml` 이 `base = "light"` 로 테마를 고정하고 plotly 템플릿
+ * (theme.py)도 밝은 지면 색이 박혀 있는데, 여기에만 `prefers-color-scheme: dark`
+ * 를 두면 **OS 가 다크인 사용자에게 밝은 페이지 위에 검은 카드만 뜬다.**
+ * 실제로 그 블록이 있었고 지웠다. 다크를 지원하려면 config·plotly 템플릿·이 파일을
+ * 한꺼번에 바꿔야 한다.
  */
 
 :root {
@@ -20,25 +26,6 @@
   --kl-up: #006300;
   --kl-down: #d03b3b;
   --kl-radius: 12px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --kl-surface: #1a1a19;
-    --kl-page: #0d0d0d;
-    --kl-ink: #ffffff;
-    --kl-ink-2: #c3c2b7;
-    --kl-muted: #898781;
-    --kl-grid: #2c2c2a;
-    --kl-axis: #383835;
-    --kl-border: rgba(255, 255, 255, 0.10);
-    --kl-blue: #3987e5;
-    --kl-orange: #d95926;
-    --kl-aqua: #199e70;
-    --kl-yellow: #c98500;
-    --kl-up: #0ca30c;
-    --kl-down: #d03b3b;
-  }
 }
 
 /* ── 헤더 ───────────────────────────────────────────────────────── */
