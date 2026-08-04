@@ -104,6 +104,11 @@ Remove-Item data\processed\*.parquet -ErrorAction SilentlyContinue
 `make_sample.py` 는 축약본을 덮어쓰기 전에 `guard_ars()` 로 구간 A 포함 여부를
 검사한다 — 2024-12 이 빠진 ARS 로 축약본을 덮어쓰면 복원 원천까지 잃기 때문이다.
 
+`make_sample.DROP_COLUMNS` 는 **앱이 안 쓰는 컬럼을 커밋본에서 뺀다** (현재 가맹점의
+`biz_no`·`tel`). 스키마 컬럼맵에서는 지우지 않는다 — API 가 그 필드를 준다는 사실은
+남겨야 하고 로컬 `data/raw` 에는 그대로 있다. 여기서 거르는 것은 **공개 저장소에
+올라가는 사본**뿐이다. `test_sample_carries_no_unused_identifiers` 가 이를 고정한다.
+
 ### 데이터셋 5종
 
 | 키 | 원본 | 기간 | UI |
@@ -111,8 +116,16 @@ Remove-Item data\processed\*.parquet -ErrorAction SilentlyContinue
 | `ars` | `ars_20241201_20241231.csv` + `ars_merged.csv` | 2024-12, 2026 상반기 | 전 탭 |
 | `sales` | `casino_fnb / roomservice / local_goods _merged.csv` | 2023-01 ~ 2024-12 | 전 탭 |
 | `golf` | `golf_visitors_merged.csv` | 2021-03 ~ 2025-12 | **미노출** |
-| `demo` | Open API | 기간 집계 | 탭1 |
-| `merchants` | Open API | — | 탭4 |
+| `demo` | Open API **(서버 다운 → EMBEDDED)** | 기간 집계 | 탭1 |
+| `merchants` | Open API → `merchants_geocoded.csv` | — | 탭4 |
+
+**`demo` 만 실데이터가 아니다.** 제공기관 원본 서버가 `HTTP_ERROR(코드 04)` 를
+돌려준다 — 게이트웨이 인증은 통과하므로(잘못된 키를 넣으면 403 이 오고, 같은 키로
+가맹점 엔드포인트를 부르면 200 이 온다) **우리 쪽에서 고칠 것이 없다.** 파라미터
+7종 조합·XML/JSON 모두 동일하며 2026-08-04 에 재확인했다. 서버가 살아나면
+`scripts/fetch_api_data.py demographics` → `make_sample.py` 순으로 복구된다.
+이 진단을 다시 하지 말 것 — 오류 코드별 다음 행동은 스크립트가 출력한다
+(`ERROR_HINTS`).
 
 `golf` 는 로더·스키마·테스트까지만 편입돼 있고 화면에 쓰지 않는다. 판매 3종과
 **단위(이용인원 vs 판매수량)와 기간이 달라 채널로 합치면 CAI·CSM 이 오염된다** —

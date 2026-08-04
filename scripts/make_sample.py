@@ -11,9 +11,12 @@
   CSV 12.4MB 를 parquet 으로 저장하면 문자열 사전 인코딩 덕에 크게 줄어든다.
 
 무엇을 담지 않는가:
-  실데이터로 확보되지 않은 데이터셋(현재 성별·연령, 가맹점 — API 키 미설정)은
-  내보내지 않는다. 내장 폴백 데이터를 'SAMPLE' 로 커밋하면 모킹을 실데이터로
-  위장하는 셈이 된다.
+  실데이터로 확보되지 않은 데이터셋(현재 성별·연령 — API 응답 오류)은 내보내지
+  않는다. 내장 폴백 데이터를 'SAMPLE' 로 커밋하면 모킹을 실데이터로 위장하는
+  셈이 된다.
+
+  **앱이 읽지 않는 식별 정보도 담지 않는다** (`DROP_COLUMNS`). 축약본은 공개
+  저장소에 커밋되므로, 화면에 쓰지 않는 컬럼을 실어 보내면 노출면만 늘어난다.
 
 사용법:
     python scripts/make_sample.py
@@ -40,6 +43,17 @@ TARGETS = (
     ("merchants", loaders._load_merchants_impl, "merchants"),
 )
 
+
+# 커밋 전에 떨어뜨릴 컬럼. 스키마(config/settings.py 의 컬럼맵)에서 지우지는
+# 않는다 — API 가 그 필드를 준다는 사실 자체는 남겨 두어야 나중에 필요해질 때
+# 다시 매핑할 수 있고, 로컬 data/raw 에는 그대로 있다. 여기서 거르는 것은
+# **공개 저장소에 커밋되는 사본**뿐이다.
+#   biz_no(사업자등록번호) · tel(가맹점 전화번호) — 지도·스코어·표 어디에서도
+#   쓰지 않는다(`grep biz_no src/` 결과 0건). 쓰지 않는 식별 정보를 배포판에
+#   싣지 않는다.
+DROP_COLUMNS: dict[str, tuple[str, ...]] = {
+    "merchants": ("biz_no", "tel"),
+}
 
 # 구간 A(실측 조인)의 근거 기간. 축약본에 이 기간이 없으면 배포판에서 상관
 # r=0.80 배너와 특산품 D+1 래그가 통째로 사라진다.
@@ -104,6 +118,10 @@ def main() -> int:
                 skipped.append((name, problem))
                 continue
 
+        dropped_cols = [c for c in DROP_COLUMNS.get(key, ()) if c in df.columns]
+        if dropped_cols:
+            df = df.drop(columns=dropped_cols)
+
         dest = S.SAMPLE_DIR / f"{name}.parquet"
         df.to_parquet(dest, index=False, compression="snappy")
         size = dest.stat().st_size
@@ -111,7 +129,8 @@ def main() -> int:
         span = ""
         if "date" in df.columns and not df["date"].isna().all():
             span = f"  {df['date'].min():%Y-%m-%d} ~ {df['date'].max():%Y-%m-%d}"
-        print(f"  ✔ {name:<14} {len(df):>7,}행  {human(size):>10}{span}")
+        note = f"  (제외: {', '.join(dropped_cols)})" if dropped_cols else ""
+        print(f"  ✔ {name:<14} {len(df):>7,}행  {human(size):>10}{span}{note}")
 
     for name, reason in skipped:
         print(f"  – {name:<14} 건너뜀: {reason}")

@@ -108,6 +108,24 @@ def test_api_datasets_fall_back_without_key(deployed):
         assert sources[key] in S.SOURCE_LABEL
 
 
+def test_sample_carries_no_unused_identifiers(deployed):
+    """커밋되는 축약본에 앱이 안 쓰는 식별 정보가 실리지 않았는지.
+
+    가맹점 API 는 사업자등록번호·전화번호를 함께 주는데 지도·스코어·표 어디에서도
+    쓰지 않는다. data/sample 은 공개 저장소에 커밋되므로 쓰지 않는 컬럼을 실어
+    보내면 노출면만 늘어난다 (scripts/make_sample.py 의 DROP_COLUMNS).
+    """
+    data, sources = deployed
+    merchants = data["merchants"]
+    assert sources["merchants"] == S.SRC_SAMPLE
+    for column in ("biz_no", "tel"):
+        assert column not in merchants.columns, f"{column} 이 축약본에 남아 있습니다"
+    # 화면이 실제로 쓰는 컬럼은 그대로 있어야 한다
+    for column in ("merchant", "lat", "lon", "category", "has_coord"):
+        assert column in merchants.columns
+    assert int(merchants["has_coord"].sum()) == 1_540
+
+
 def test_no_real_data_at_all(tmp_path, monkeypatch):
     """data/ 전체가 없어도 내장 폴백으로 앱이 살아남는지 (최종 안전장치)."""
     monkeypatch.setattr(S, "RAW_DIR", tmp_path / "x")
