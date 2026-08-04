@@ -82,8 +82,11 @@ def render(ctx: dict) -> None:
                 width="stretch", key="lc_top",
             )
             C.table_view(
-                local_top[["item", "tier_label", "total_qty", "margin_proxy",
-                           "csm"]].round(3).rename(columns={
+                local_top.assign(
+                    근거=local_top["lift_measured"].map(
+                        {True: "측정됨", False: "표본 부족"})
+                )[["item", "tier_label", "total_qty", "margin_proxy",
+                   "csm", "근거"]].round(3).rename(columns={
                     "item": "상품", "tier_label": "티어", "total_qty": "총 판매수량",
                     "margin_proxy": "마진 프록시", "csm": "CSM"}),
                 label="특산품 표로 보기",

@@ -887,3 +887,63 @@ def test_bundles_are_vip_tier(period_a, full_window):
         for b in bundles:
             assert b["room_tier"] in labels and b["local_tier"] in labels
             assert b["co_days"] > 0
+
+
+# ── 표본 미달 상품의 탄력성을 무엇으로 채우는가 ────────────────────────
+# `nrm` 기본 채움값 0.5 는 중립이 아니다. 실측 상품의 탄력성 중앙값은 731일 창에서
+# 0.240 이라 0.5 는 측정된 상품의 82%보다 높은 값이고, "표본이 부족하다"는 사실이
+# 점수 보너스가 된다 — 유입 반응이 나빴던 상품(lift 0.71, CSM 14.6)이 아무것도
+# 모르는 상품(CSM 48.1)보다 33점 낮게 나왔다.
+#
+# 축을 빼고 재정규화하는 안(CII pressure·VTS base 규약)은 여기서 반대로 뒤집혔다:
+# 물량·마진이 둘 다 최상인 미측정 상품이 100점 1위가 된다(시뮬레이션 +22.5점).
+# 그래서 실측 분포의 중앙값으로 채운다.
+EXPECTED_FILL_A = 0.354      # 31일 창
+EXPECTED_FILL_FULL = 0.240   # 731일 창
+
+
+def test_unmeasured_elasticity_uses_measured_median(period_a, full_window):
+    """미측정 상품의 탄력성이 0.5 가 아니라 실측 중앙값으로 채워지는지."""
+    for (ars_w, sales_w), expected in ((period_a, EXPECTED_FILL_A),
+                                       (full_window, EXPECTED_FILL_FULL)):
+        infl = inflow_mod.build_inflow(ars_w, sales_w)
+        csm = crosssell.compute_csm(sales_w, infl)
+        fill = csm.attrs["gate"]["elasticity_fill"]
+        assert fill == pytest.approx(expected, abs=0.01)
+
+        # 0.5 는 중립이 아니다 — 측정된 상품의 대다수가 그 아래에 있다
+        measured = csm.loc[csm["lift_measured"], "elasticity"]
+        assert fill < 0.5
+        assert (measured < 0.5).mean() > 0.6, "0.5 가 중립이면 이 규칙은 불필요하다"
+
+        # 채움값이 실제로 들어갔는지 (미측정 상품의 탄력성은 전부 같은 값)
+        unmeasured = csm.loc[~csm["lift_measured"], "elasticity"]
+        assert unmeasured.nunique() == 1
+        assert float(unmeasured.iloc[0]) == pytest.approx(fill)
+        assert csm["lift_measured"].equals(csm["lift"].notna())
+
+
+def test_unmeasured_items_cannot_top_the_ranking(period_a, full_window):
+    """근거 없는 상품이 1위가 되지 않는지 — 재정규화 안을 버린 이유.
+
+    축을 빼고 재정규화하면 물량·마진만으로 100점이 나와 미측정 상품이 1위를
+    차지한다. 중앙값 채움은 상한을 눌러 그 일이 생기지 않게 한다.
+    """
+    for ars_w, sales_w in (period_a, full_window):
+        infl = inflow_mod.build_inflow(ars_w, sales_w)
+        csm = crosssell.compute_csm(sales_w, infl)
+        top = crosssell.top_items(csm, n=8, exclude_comp=True)
+        assert bool(top["lift_measured"].iloc[0]), "1위가 미측정 상품이다"
+
+        # 같은 물량·마진이면 측정된 상품이 미측정 상품보다 앞선다는 성질:
+        # 미측정 상품의 최고점은 측정된 상품의 최고점을 넘을 수 없다
+        best_measured = csm.loc[csm["lift_measured"], "csm"].max()
+        best_unmeasured = csm.loc[~csm["lift_measured"], "csm"].max()
+        assert best_unmeasured <= best_measured
+
+        # 특산품 탭은 이 규칙의 효과가 가장 크게 드러나는 자리다
+        local = crosssell.top_items(csm, S.CH_LOCAL, n=6, exclude_comp=True)
+        assert local["lift_measured"].all(), (
+            "특산품 상위가 근거 없는 상품으로 채워졌다: "
+            f"{list(local.loc[~local['lift_measured'], 'item'])}"
+        )

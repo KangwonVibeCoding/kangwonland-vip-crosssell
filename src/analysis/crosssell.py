@@ -160,9 +160,26 @@ def compute_csm(sales: pd.DataFrame, inflow: pd.DataFrame,
     out = base.merge(lift, on="item_id", how="left")
     # lift 가 비었으면 merge 결과가 object dtype 이 된다 → log1p 가 터진다
     out = out.assign(lift=pd.to_numeric(out["lift"], errors="coerce"))
+    measured = out["lift"].notna()
 
     # log1p 로 압축한다 — 스무딩 후에도 lift 는 롱테일이다
     elasticity = scoring.nrm(np.log1p(out["lift"].clip(lower=0)))
+
+    # ⚠ 표본 미달 상품의 탄력성을 **0.5 로 두면 안 된다.** `nrm` 의 기본 채움값이
+    # 0.5 인데, 실측된 상품의 탄력성 중앙값은 0.24(731일 창)라서 0.5 는 중립이
+    # 아니라 상위 18% 대우다 — 측정된 상품의 82%보다 높다. 그러면 "표본이 부족하다"는
+    # 사실이 점수 보너스가 되고, 실제로 유입 반응이 나빴던 상품(lift 0.71)이
+    # 아무것도 모르는 상품보다 33점 낮게 나왔다.
+    #
+    # 대안으로 축을 빼고 남은 가중치로 재정규화하는 방법(CII pressure·VTS base 와
+    # 같은 규약)을 재 봤는데, 여기서는 반대로 뒤집힌다: 물량·마진이 둘 다 최상인
+    # 미측정 상품이 100점으로 1위가 된다(실측 +22.5점). 축이 둘만 남으면 만점이
+    # 쉬워지기 때문이다. 그래서 **실측 분포의 중앙값**으로 채운다 — 미측정 상품은
+    # 1위가 될 수도, 공짜 보너스를 받을 수도 없는 '평범한 상품' 대우가 된다.
+    fill = float(S.CSM_ELASTICITY_FILL_DEFAULT)
+    if measured.any():
+        fill = float(elasticity.loc[measured].quantile(S.CSM_ELASTICITY_FILL_QUANTILE))
+    elasticity = elasticity.mask(~measured, fill)
     parts = {
         "elasticity": elasticity,
         "scale": scoring.nrm(out["total_qty"]),
@@ -176,11 +193,15 @@ def compute_csm(sales: pd.DataFrame, inflow: pd.DataFrame,
     scored = out.assign(
         channel_label=out["channel"].map(S.CHANNEL_LABEL),
         tier_label=out["tier"].map(S.TIER_LABEL),
+        lift_measured=measured.to_numpy(),
+        elasticity=elasticity.to_numpy(),
         csm=csm.to_numpy(),
     ).sort_values("csm", ascending=False).reset_index(drop=True)
     # 게이트 정보를 화면까지 들고 간다. 몇 종을 왜 뺐는지 밝히지 않으면 "전 상품을
     # 다 본 순위"로 읽힌다 (attrs 는 merge·sort 를 거치며 사라질 수 있어 다시 단다).
-    scored.attrs["gate"] = dict(lift.attrs.get("gate", {}))
+    scored.attrs["gate"] = {**lift.attrs.get("gate", {}),
+                            "elasticity_fill": fill,
+                            "measured": int(measured.sum())}
     return scored
 
 

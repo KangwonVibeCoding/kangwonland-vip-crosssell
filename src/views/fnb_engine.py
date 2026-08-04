@@ -116,8 +116,10 @@ def render(ctx: dict) -> None:
                 width="stretch", key="fnb_top",
             )
             C.table_view(
-                pool[["item", "channel_label", "venue", "tier_label",
-                      "total_qty", "margin_proxy", "csm"]].round(3).rename(columns={
+                pool.assign(
+                    근거=pool["lift_measured"].map({True: "측정됨", False: "표본 부족"})
+                )[["item", "channel_label", "venue", "tier_label",
+                   "total_qty", "margin_proxy", "csm", "근거"]].round(3).rename(columns={
                     "item": "상품", "channel_label": "채널", "venue": "영업장",
                     "tier_label": "티어", "total_qty": "총 판매수량",
                     "margin_proxy": "마진 프록시", "csm": "CSM"}),
@@ -157,17 +159,19 @@ def render(ctx: dict) -> None:
         C.empty_state("CSM 을 계산할 데이터가 없습니다.")
     else:
         has_lift = csm["lift"].notna().any()
-        view = csm.head(50).assign(
-            상품=csm.head(50)["item"],
-            채널=csm.head(50)["channel_label"],
-            영업장=csm.head(50)["venue"],
-            티어=csm.head(50)["tier_label"],
-            Lift=csm.head(50)["lift"].round(2),
-            총판매=csm.head(50)["total_qty"],
-            마진프록시=csm.head(50)["margin_proxy"].round(3),
-            CSM=csm.head(50)["csm"].round(1),
-            컴프=csm.head(50)["is_comp"].map({True: "컴프", False: ""}),
-        )[["상품", "채널", "영업장", "티어", "Lift", "총판매", "마진프록시",
+        head = csm.head(50)
+        view = head.assign(
+            상품=head["item"],
+            채널=head["channel_label"],
+            영업장=head["venue"],
+            티어=head["tier_label"],
+            Lift=head["lift"].round(2),
+            근거=head["lift_measured"].map({True: "측정됨", False: "표본 부족"}),
+            총판매=head["total_qty"],
+            마진프록시=head["margin_proxy"].round(3),
+            CSM=head["csm"].round(1),
+            컴프=head["is_comp"].map({True: "컴프", False: ""}),
+        )[["상품", "채널", "영업장", "티어", "Lift", "근거", "총판매", "마진프록시",
            "CSM", "컴프"]]
         st.dataframe(
             view, width="stretch", hide_index=True,
@@ -177,6 +181,9 @@ def render(ctx: dict) -> None:
                 "Lift": st.column_config.NumberColumn(
                     "Lift", format="%.2f",
                     help="1 초과 = 카지노 유입 증가 시 판매 비중이 커지는 상품"),
+                "근거": st.column_config.TextColumn(
+                    "근거", help="'표본 부족' = Lift 를 측정하지 못해 실측 분포의 "
+                                "중앙값을 대신 넣은 상품. 물량·마진으로만 순위가 매겨진다."),
                 "총판매": st.column_config.NumberColumn("총 판매수량", format="%d"),
             },
         )
@@ -196,10 +203,12 @@ def render(ctx: dict) -> None:
                 f"Lift 는 표본 요건을 통과한 {gate['kept']}종에만 계산했습니다 — "
                 f"판매일수 {gate['min_days']}일 이상(창 {gate['window_days']}일의 "
                 f"{S.LIFT_MIN_DAY_RATIO:.0%}) · 수량은 채널 중앙값 이상({floors}). "
-                f"미달 {gate['dropped']}종은 Lift 를 비워 두고 물량·마진으로만 "
-                "순위를 매깁니다. 요건이 창 길이·채널 스케일을 따라가지 않으면 긴 "
-                "구간에서 판매일수 몇 일짜리 상품의 Lift 가 수천까지 튀어 상위를 "
-                "점령합니다(요건 도입 전 실측 최대 24,027)."
+                f"미달 {gate['dropped']}종('근거' 열의 '표본 부족')은 Lift 를 비워 "
+                f"두고, 탄력성 축은 실측 분포의 중앙값({gate.get('elasticity_fill', 0):.3f})"
+                "으로 채웁니다 — 0.5 를 넣으면 측정된 상품의 82%보다 높은 값이라 "
+                "'표본이 부족하다'는 사실이 점수 보너스가 됩니다. 요건이 창 길이·채널 "
+                "스케일을 따라가지 않으면 긴 구간에서 판매일수 몇 일짜리 상품의 Lift 가 "
+                "수천까지 튀어 상위를 점령합니다(요건 도입 전 실측 최대 24,027)."
             )
         comp_qty = float(sales.loc[sales["is_comp"], "qty"].sum())
         if comp_qty:
