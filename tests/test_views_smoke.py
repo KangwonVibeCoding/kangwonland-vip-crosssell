@@ -63,6 +63,13 @@ def test_overview_pipeline(period_a, bundle):
     # 차트 생성이 예외 없이 되는지
     assert charts.inflow_stack(infl).data
     assert charts.corr_bars(head).data
+
+    # 요일 교란 통제 덤벨 — 채널당 이동 선분 1개 + 원 상관/편상관 마커 2개
+    confound = stats.confound_table(ars, sales)
+    assert len(confound) == len(S.CHANNELS)
+    dumbbell = charts.confound_dumbbell(confound)
+    assert len(dumbbell.data) == len(confound) + 2
+    assert dumbbell.data[-1].error_x.array is not None, "부트스트랩 CI 오차막대가 없다"
     assert charts.segment_donut(seg).data
     assert charts.age_gender_bars(data["demo"]).data
 
@@ -260,3 +267,20 @@ def test_all_tiers_filtered_out(bundle):
     assert none.empty
     assert crosssell.compute_csm(none, pd.DataFrame()).empty
     assert stats.daily_qty(none).empty
+
+
+def test_josa_matches_final_consonant():
+    """데이터에서 문장을 만들 때 조사가 어긋나지 않는지.
+
+    채널 이름이 필터에 따라 바뀌므로 '지역특산품는' 같은 문장이 실제로 화면에
+    뜬 적이 있다. 받침 판정은 한 곳(components.josa)에서만 한다.
+    """
+    from src.ui import components as C
+
+    assert C.josa("지역특산품") == "은"      # 받침 ㅁ
+    assert C.josa("룸서비스") == "는"        # 받침 없음
+    assert C.josa("카지노 식음") == "은"     # 공백 뒤 마지막 글자로 판정
+    assert C.josa("VIP") == "는"             # 한글이 아니면 기본형
+    assert C.josa("") == "는"
+    assert C.josa("특산품", "이가") == "이"
+    assert C.josa("서비스", "을를") == "를"

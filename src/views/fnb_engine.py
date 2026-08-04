@@ -185,6 +185,22 @@ def render(ctx: dict) -> None:
                 "이 구간은 표본이 짧아 고유입일 / 저유입일을 나눌 수 없어 Lift 를 "
                 "계산하지 않았습니다 (CSM 은 물량·마진 신호로만 산출)."
             )
+        # 몇 종을 무엇 때문에 뺐는지 밝히지 않으면 이 표가 '전 상품 순위'로 읽힌다.
+        gate = csm.attrs.get("gate") or {}
+        if gate.get("dropped"):
+            floors = " · ".join(
+                f"{S.CHANNEL_LABEL.get(ch, ch)} {qty:,.0f}개"
+                for ch, qty in gate.get("min_qty", {}).items()
+            )
+            C.caveat(
+                f"Lift 는 표본 요건을 통과한 {gate['kept']}종에만 계산했습니다 — "
+                f"판매일수 {gate['min_days']}일 이상(창 {gate['window_days']}일의 "
+                f"{S.LIFT_MIN_DAY_RATIO:.0%}) · 수량은 채널 중앙값 이상({floors}). "
+                f"미달 {gate['dropped']}종은 Lift 를 비워 두고 물량·마진으로만 "
+                "순위를 매깁니다. 요건이 창 길이·채널 스케일을 따라가지 않으면 긴 "
+                "구간에서 판매일수 몇 일짜리 상품의 Lift 가 수천까지 튀어 상위를 "
+                "점령합니다(요건 도입 전 실측 최대 24,027)."
+            )
         comp_qty = float(sales.loc[sales["is_comp"], "qty"].sum())
         if comp_qty:
             C.caveat(

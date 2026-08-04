@@ -9,6 +9,10 @@
 
 특산품이 D+1 이라는 사실이 마케팅 처방을 바꾼다: 유입 피크일 당일엔 F&B,
 **익일 오전엔 특산품 쿠폰**. 요일 인덱스(특산품 일요일 1.68)와도 일관된다.
+
+⚠ 위 상관은 **요일을 통제하지 않은 값**이다. 요일 더미를 빼면 카지노 식음
+0.796 → 0.370, 룸서비스 0.733 → 0.558 로 순서가 뒤집힌다(`stats.confound_table`).
+그래서 `prescriptions()` 는 D+0 집행 순서를 래그 상관이 아니라 편상관으로 매긴다.
 """
 
 from __future__ import annotations
@@ -161,38 +165,90 @@ def lag_groups(item_lags: pd.DataFrame, lag: int, n: int = 10,
 
 
 def prescriptions(best: pd.DataFrame, dow_profile: pd.DataFrame,
-                  month_profile: pd.DataFrame) -> list[dict]:
+                  month_profile: pd.DataFrame,
+                  confound: pd.DataFrame | None = None) -> list[dict]:
     """실행 처방 카드 3장의 내용을 데이터에서 생성한다.
 
     수치를 문장에 박아 넣는 대신 계산 결과를 그대로 옮긴다 — 필터가 바뀌면
     처방도 함께 바뀌어야 하기 때문이다.
+
+    `confound`(= `stats.confound_table()`)를 주면 **D+0 카드의 우선순위를 원 래그
+    상관이 아니라 요일 통제 편상관으로 매긴다.** 원 상관 순서는 카지노 식음이
+    1위지만 요일을 빼면 룸서비스가 1위이고, 요일은 마케팅으로 바꿀 수 없는
+    변수이므로 집행 순서는 통제 후 순서를 따라야 한다.
     """
     cards: list[dict] = []
     lag_of = {r.channel: int(r.best_lag) for r in best.itertuples()} if not best.empty else {}
     r_of = {r.channel: float(r.pearson) for r in best.itertuples()} if not best.empty else {}
 
-    same_day = [S.CHANNEL_LABEL[c] for c, k in lag_of.items() if k == 0]
-    next_day = [S.CHANNEL_LABEL[c] for c, k in lag_of.items() if k >= 1]
+    conf = confound if confound is not None else pd.DataFrame()
+    partial_of = {r.channel: float(r.partial) for r in conf.itertuples()} \
+        if not conf.empty else {}
+    p_of = {r.channel: float(r.p) for r in conf.itertuples()} if not conf.empty else {}
+    verdict_of = {r.channel: str(r.verdict) for r in conf.itertuples()} \
+        if not conf.empty else {}
+
+    def _p_text(channel: str) -> str:
+        p = p_of.get(channel)
+        if p is None or not np.isfinite(p):
+            return ""
+        return " p<0.001" if p < 0.001 else f" p={p:.3f}"
+
+    # 편상관이 있으면 그 내림차순, 없으면 래그 상관 내림차순
+    def _order(channels: list[str]) -> list[str]:
+        if partial_of:
+            return sorted(channels,
+                          key=lambda c: (partial_of.get(c, float("-inf")),
+                                         r_of.get(c, float("-inf"))),
+                          reverse=True)
+        return sorted(channels, key=lambda c: r_of.get(c, float("-inf")), reverse=True)
+
+    same_day = _order([c for c, k in lag_of.items() if k == 0])
+    next_day = _order([c for c, k in lag_of.items() if k >= 1])
 
     if same_day:
+        top = same_day[0]
+        if top in partial_of:
+            # 조사를 붙이지 않는 문형으로 쓴다 — 채널 이름이 데이터에서 오므로
+            # '카지노 식음는' 같은 문장이 발표 화면에 뜰 수 있다.
+            detail = (f"당일 집행 1순위는 {S.CHANNEL_LABEL[top]} — 요일을 통제해도 "
+                      f"남는 관계가 가장 견고하다({verdict_of.get(top, '')}). "
+                      "나머지 당일 채널은 그다음 순서로 붙인다.")
+            evidence = " · ".join(
+                f"{S.CHANNEL_LABEL[c]} 편상관 {partial_of[c]:+.3f}{_p_text(c)}"
+                f" (원 r {r_of[c]:+.3f})"
+                for c in same_day if c in partial_of
+            )
+        else:
+            detail = "카지노 프리미엄 F&B와 룸서비스 VIP 어메니티를 당일 집행한다."
+            evidence = " · ".join(f"{S.CHANNEL_LABEL[c]} r={r_of[c]:+.3f}" for c in same_day)
         cards.append({
             "title": "D+0 · 유입 피크일 당일",
-            "targets": same_day,
-            "detail": "카지노 프리미엄 F&B와 룸서비스 VIP 어메니티를 당일 집행한다.",
-            "evidence": " · ".join(
-                f"{S.CHANNEL_LABEL[c]} r={r_of[c]:+.3f}"
-                for c, k in lag_of.items() if k == 0
-            ),
+            "targets": [S.CHANNEL_LABEL[c] for c in same_day],
+            "detail": detail,
+            "evidence": evidence,
         })
     if next_day:
+        evidence = " · ".join(
+            f"{S.CHANNEL_LABEL[c]} D+{lag_of[c]} r={r_of[c]:+.3f}" for c in next_day
+        )
+        detail = "체크아웃 동선에 지역특산품 선물 패키지 쿠폰을 푸시한다."
+        # 래그 상관만으로는 D+1 을 주장할 수 없다 — D+1 과 D+0 의 차이는 n≈30 에서
+        # 통계적으로 구별되지 않고, 요일을 통제하면 특산품 편상관은 유의하지 않다.
+        # 근거를 요일 프로파일로 정직하게 옮겨 적는다.
+        weak = [c for c in next_day
+                if verdict_of.get(c) == S.CONFOUND_VERDICT_NULL]
+        if weak:
+            evidence += " · " + " · ".join(
+                f"요일 통제 시 {S.CHANNEL_LABEL[c]} {partial_of[c]:+.3f}{_p_text(c)}"
+                for c in weak
+            )
+            detail += " 근거는 래그 상관이 아니라 요일 프로파일(토 저조 → 일 급등)이다."
         cards.append({
             "title": "D+1 · 익일 오전",
-            "targets": next_day,
-            "detail": "체크아웃 동선에 지역특산품 선물 패키지 쿠폰을 푸시한다.",
-            "evidence": " · ".join(
-                f"{S.CHANNEL_LABEL[c]} D+{lag_of[c]} r={r_of[c]:+.3f}"
-                for c, k in lag_of.items() if k >= 1
-            ),
+            "targets": [S.CHANNEL_LABEL[c] for c in next_day],
+            "detail": detail,
+            "evidence": evidence,
         })
 
     # 계절 오버레이 — 채널별 최고 월을 데이터에서 찾는다

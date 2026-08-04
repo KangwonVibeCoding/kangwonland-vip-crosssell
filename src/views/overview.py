@@ -1,8 +1,9 @@
 """탭 1 — 메인 대시보드.
 
-가설 검증 배너 → KPI → 유입 추이 → VIP 모수 → 캠페인 집행 캘린더.
-상단에서 "카지노 유입이 리조트 소비를 견인한다"는 근거(상관계수)를 먼저 제시하고,
-그 아래에서 그 관계를 실행 계획으로 번역한다.
+가설 검증 배너 → 요일 교란 통제 → KPI → 유입 추이 → VIP 모수 → 캠페인 집행 캘린더.
+상단에서 "카지노 유입이 리조트 소비를 견인한다"는 근거(상관계수)를 제시하고,
+**바로 이어서 그 상관의 절반이 주말 효과였다는 통제 결과**를 같이 세운 뒤,
+남은 관계를 실행 계획으로 번역한다.
 """
 
 from __future__ import annotations
@@ -15,6 +16,77 @@ from src.analysis import inflow as inflow_mod
 from src.analysis import stats, vip
 from src.ui import charts
 from src.ui import components as C
+
+
+def _render_confound(table: pd.DataFrame) -> None:
+    """요일 교란 통제 절 — 가설 검증 배너 **바로 아래**에 둔다.
+
+    위치가 곧 주장이다. r=0.80 을 띄운 화면에서 이 절이 아래쪽에 밀리면 "0.80 을
+    먼저 팔고 반박은 각주로" 가 된다. 배너 직후에 놓아 근거와 그 한계를 한 호흡에
+    읽게 한다.
+    """
+    if table.empty:
+        return
+    st.markdown("")
+    n_days = int(table["n_days"].max())
+    metric_label = str(table["metric_label"].iloc[0])
+    C.section_header(
+        "이 상관은 주말 효과인가 — 요일 교란 통제",
+        "토요일엔 유입도 매출도 많다. 요일이 양변을 동시에 밀어올리는 공통 원인일 수 "
+        "있어서, 요일 더미로 양변을 회귀한 잔차끼리의 상관(편상관)을 나란히 세웠다. "
+        "요일은 마케팅으로 바꿀 수 없으므로, 통제 후에도 남는 관계만이 개입 여지다.",
+        badge="실측 조인",
+        badge_detail=(f"{n_days}일 · {metric_label} 기준 · "
+                      f"부트스트랩·순열 각 {S.CONFOUND_RESAMPLES:,}회"),
+    )
+    st.plotly_chart(charts.confound_dumbbell(table), width="stretch",
+                    key="ov_confound")
+    C.table_view(
+        table.assign(
+            채널=table["channel_label"],
+            원상관=table["raw"].round(3),
+            통제후=table["partial"].round(3),
+            감소=table["delta"].round(3),
+            CI=[f"[{lo:.3f}, {hi:.3f}]" for lo, hi in zip(table["ci_lo"], table["ci_hi"])],
+            p값=table["p"].round(4),
+            판정=table["verdict"],
+            표본일수=table["n_days"],
+        )[["채널", "원상관", "통제후", "감소", "CI", "p값", "판정", "표본일수"]].rename(
+            columns={"원상관": "원 상관", "통제후": "요일 통제 후",
+                     "CI": "95% CI(부트스트랩)", "p값": "p(순열검정)"}),
+        label="편상관 표로 보기",
+    )
+
+    lines: list[str] = []
+    raw_top = table.loc[table["raw"].idxmax()]
+    if raw_top["raw"]:
+        shrink = 1 - (raw_top["partial"] / raw_top["raw"])
+        lines.append(
+            f"{raw_top['channel_label']}의 원 상관 {raw_top['raw']:.3f} 중 "
+            f"{shrink:.0%}는 요일이 설명한다 — 통제 후 {raw_top['partial']:.3f} "
+            f"({C.fmt_p(raw_top['p'])}, {raw_top['verdict']})."
+        )
+    lead = table.iloc[0]
+    if stats.confound_flips_order(table):
+        lines.append(
+            f"통제 전 1위는 {raw_top['channel_label']}이지만 통제 후 1위는 "
+            f"{lead['channel_label']}({lead['partial']:.3f}) — 순서가 뒤집힌다. "
+            f"{lead['channel_label']}{C.josa(lead['channel_label'])} 요일과 무관하게 "
+            "유입 그 자체를 따라간다."
+        )
+    weak = list(table.loc[table["verdict"] == S.CONFOUND_VERDICT_NULL, "channel_label"])
+    if weak:
+        lines.append(
+            f"{' · '.join(weak)}{C.josa(weak[-1])} 통제 후 95% CI 가 0을 포함해 "
+            "유의하지 않다 — 유입 자체보다 요일·계절 신호(탭3)로 공략할 채널이다."
+        )
+    C.insight_box(lines, title="요일을 빼고 남은 것")
+    C.caveat(
+        f"편상관은 요일 더미 6개로 양변을 회귀한 잔차끼리의 상관입니다. 표본 "
+        f"{n_days}일에서 계산했고, CI 는 부트스트랩·p 는 순열검정"
+        f"(각 {S.CONFOUND_RESAMPLES:,}회, seed {S.CONFOUND_SEED} 고정)입니다. "
+        "scripts/diagnose_confound.py 로 같은 수치를 재현할 수 있습니다."
+    )
 
 
 def render(ctx: dict) -> None:
@@ -54,13 +126,13 @@ def render(ctx: dict) -> None:
     # ── 가설 검증 배너 ────────────────────────────────────────────────
     corr = stats.corr_table(ars, sales)
     head = stats.headline_corr(corr)
+    # 원 상관과 편상관을 **같은 화면에서 동시에** 계산한다. r=0.80 만 먼저 띄우고
+    # 통제 결과를 아래에 숨기면, 배너를 보고 스크롤하지 않은 사람은 반쪽짜리
+    # 근거만 가져가게 된다.
+    confound = stats.confound_table(ars, sales)
     if head:
         n_days = int(corr["n_days"].max())
         top = max(head.values())
-        pairs = [
-            (S.CHANNEL_LABEL[ch], f"{head[ch]:.3f}")
-            for ch in S.CHANNELS if ch in head
-        ]
         # 기준축은 총 접수자다. 다만 ARS 전처리본에 그 컬럼이 없는 구간에서는
         # 입장권 구매 건수로 내려간다 — 어느 지표로 잰 상관인지 배지에 드러낸다.
         metric = stats.headline_metric(corr)
@@ -68,14 +140,42 @@ def render(ctx: dict) -> None:
             "recv_total": "내국인 총 접수자",
             "tickets": "입장권 구매 건수",
         }.get(metric, "유입 지표")
+
+        if not confound.empty:
+            lead = confound.iloc[0]                      # 편상관 1위 = 통제 후 우선순위
+            raw_top = confound.loc[confound["raw"].idxmax()]
+            shrink = 1 - (raw_top["partial"] / raw_top["raw"]) if raw_top["raw"] else 0.0
+            headline = (f"카지노 유입 ↔ 리조트 소비 r = {top:.2f} · "
+                        f"요일을 통제하면 {lead['partial']:.2f}")
+            sub = (
+                f"원 상관 1위 {raw_top['channel_label']}"
+                f"{C.josa(raw_top['channel_label'])} 요일을 빼면 "
+                f"{raw_top['raw']:.3f} → {raw_top['partial']:.3f} — {shrink:.0%}가 "
+                f"주말 효과였다. 통제 후에도 견고하게 남는 채널은 "
+                f"{lead['channel_label']}({lead['partial']:.3f}, {C.fmt_p(lead['p'])}) — "
+                "교차판매 1순위는 여기다."
+            )
+            # 칩도 편상관 순으로 세운다. 원 상관 순서로 두면 배너가 아직도
+            # 옛 서사(카지노 식음 1위)를 말하게 된다.
+            pairs = [
+                (r.channel_label, f"{r.raw:.3f} → {r.partial:.3f}")
+                for r in confound.itertuples()
+            ]
+            badge_detail = (f"{n_days}일 날짜 조인 · {metric_label} 기준 · "
+                            "요일 통제 편상관 병기")
+        else:
+            headline = f"카지노 유입 ↔ 리조트 소비 상관 r = {top:.2f}"
+            sub = ("ARS 예약 유입이 클수록 리조트 내 F&B 소비가 함께 커진다 — "
+                   "교차판매 가설이 실데이터로 확인된다.")
+            pairs = [(S.CHANNEL_LABEL[ch], f"{head[ch]:.3f}")
+                     for ch in S.CHANNELS if ch in head]
+            badge_detail = f"{n_days}일 날짜 조인 · {metric_label} 기준"
+
         C.hero_banner(
-            headline=f"카지노 유입 ↔ 리조트 소비 상관 r = {top:.2f}",
-            sub="ARS 예약 유입이 클수록 리조트 내 F&B 소비가 함께 커진다 — "
-                "교차판매 가설이 실데이터로 확인된다.",
-            stats_pairs=pairs,
-            badge="실측 조인",
-            badge_detail=f"{n_days}일 날짜 조인 · {metric_label} 기준",
+            headline=headline, sub=sub, stats_pairs=pairs,
+            badge="실측 조인", badge_detail=badge_detail,
         )
+        _render_confound(confound)
     else:
         C.hero_banner(
             headline="이 구간은 유입·판매 데이터가 겹치지 않습니다",
@@ -219,11 +319,12 @@ def render(ctx: dict) -> None:
     st.markdown("")
     C.section_header(
         "VIP 타겟 지수 상위일 = 캠페인 집행 캘린더",
-        "유입·모수·실증 소비·미달 기회를 합산한 우선순위. 이미 잘 파는 날보다 "
-        "'유입은 많은데 아직 덜 판 날'이 높게 나온다.",
+        "유입·실증 소비·미달 기회를 합산한 우선순위. 이미 잘 파는 날보다 "
+        "'유입은 많은데 아직 덜 판 날'이 높게 나온다 — 오른쪽 두 열이 그 차이다.",
         badge=fs.period_badge,
     )
     calendar = vip.campaign_calendar(vts)
+    diag = vip.vts_vs_inflow(vts)
     if calendar.empty:
         C.empty_state("이 구간에서는 VTS 를 계산할 수 없습니다.")
     else:
@@ -231,24 +332,61 @@ def render(ctx: dict) -> None:
             날짜=calendar["date"].dt.strftime("%Y-%m-%d"),
             요일=calendar.get("dow_name", ""),
             유입지수=calendar["inflow"].round(1),
-            VIP모수=calendar["vrb"].round(0),
+            유입순위=calendar["inflow_rank"],
             VIP소비=calendar["vip_qty"].fillna(0).round(0),
             미달기회=calendar["headroom"].round(3),
             VTS=calendar["vts"].round(1),
             등급=calendar["vts_grade"],
+            유입밖=calendar["inflow_only_miss"],
             산출=calendar["source"],
-        )[["날짜", "요일", "유입지수", "VIP모수", "VIP소비", "미달기회",
-           "VTS", "등급", "산출"]]
+        )[["날짜", "요일", "유입지수", "유입순위", "VIP소비", "미달기회",
+           "VTS", "등급", "유입밖", "산출"]]
         st.dataframe(
             display, width="stretch", hide_index=True,
             column_config={
                 "VTS": st.column_config.ProgressColumn(
                     "VTS", min_value=0, max_value=100, format="%.1f"),
-                "VIP모수": st.column_config.NumberColumn("VIP 모수", format="%d"),
                 "VIP소비": st.column_config.NumberColumn("VIP 소비", format="%d"),
                 "미달기회": st.column_config.NumberColumn("미달 기회", format="%.3f"),
                 "유입지수": st.column_config.NumberColumn("유입 지수", format="%.1f"),
+                "유입순위": st.column_config.NumberColumn(
+                    "유입 순위", format="%d위",
+                    help="유입 지수만으로 줄 세웠을 때의 순위"),
+                "유입밖": st.column_config.CheckboxColumn(
+                    "유입만 봤다면 놓침",
+                    help=f"유입 상위 {diag['top_n']}일에는 들어오지 않는 날"),
             },
+        )
+
+    # VTS 가 유입 지수와 얼마나 다른지는 숨길 게 아니라 화면에 띄울 값이다.
+    # 겹침이 N/N 이면 이 표를 볼 이유가 없다는 뜻이고, 사용자가 그걸 알아야 한다.
+    if not calendar.empty:
+        if diag["new_days"]:
+            days = " · ".join(f"{d:%m-%d}" for d in diag["new_days"])
+            C.insight_box(
+                [f"상위 {diag['top_n']}일 중 {len(diag['new_days'])}일({days})은 "
+                 "유입 지수만 봤다면 놓쳤을 날이다 — 유입은 중위권이지만 유입 대비 "
+                 "판매가 덜 된 날이라 교차판매 여지가 크다.",
+                 f"나머지 {diag['overlap']}일은 유입 상위일과 같다. VTS 와 유입 지수의 "
+                 f"상관은 r={diag['corr']:.3f}로, 완전히 독립된 지표가 아니라 "
+                 "'유입이 큰 날 중에서 아직 덜 판 날'을 앞으로 당기는 지수다."],
+                title="유입만 봤다면 놓쳤을 날",
+            )
+        else:
+            C.caveat(
+                f"이 구간에서는 VTS 상위 {diag['top_n']}일이 유입 상위 "
+                f"{diag['top_n']}일과 완전히 같습니다(r={diag['corr']:.3f}). "
+                "판매 데이터가 없어 '미달 기회'·'실증 소비' 축이 상수로 떨어지면 "
+                "VTS 는 유입 지수와 같아집니다 — 이 구간에서는 유입 지수만 보셔도 됩니다."
+            )
+    if "base_signal" in vts.columns and vts["base_signal"].iloc[0] != "VRB":
+        C.caveat(
+            "VIP 모수(VRB) 축은 이 지수에서 자동으로 빠졌습니다. 성별·연령이 기간 "
+            "집계로만 제공되어 VIP 비율이 상수이고, 그래서 VRB 는 유입 건수의 상수배"
+            f"(실측 r={stats.pearson(vts['inflow'], vts['vrb']):.4f})라 유입 축과 같은 "
+            "신호이기 때문입니다. 두 축을 다 쓰면 유입에 가중치를 두 번 주는 셈이라, "
+            "그 몫은 '미달 기회'로 넘겼습니다. 일자별 성별·연령 데이터가 들어오면 "
+            "이 축은 자동으로 복구됩니다."
         )
 
     # ── 자동 인사이트 ─────────────────────────────────────────────────
@@ -258,7 +396,7 @@ def render(ctx: dict) -> None:
         lines.append(
             f"집행 우선순위 1위는 {best['date']:%Y-%m-%d}"
             f"({best.get('dow_name', '')}요일) — VTS {best['vts']:.1f}, "
-            f"유입 지수 {best['inflow']:.1f}."
+            f"유입 지수 {best['inflow']:.1f}(유입 {int(best['inflow_rank'])}위)."
         )
     dow = inflow_mod.dow_profile_table(ars, sales)
     if not dow.empty:

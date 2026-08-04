@@ -130,6 +130,62 @@ def corr_bars(head: dict[str, float]) -> go.Figure:
     return fig
 
 
+def confound_dumbbell(table: pd.DataFrame) -> go.Figure:
+    """요일 교란 통제 — 원 상관에서 편상관으로 이동한 거리를 채널마다 하나의 선으로.
+
+    두 값을 나란한 막대 두 개로 그리면 "둘 다 크다"로 읽힌다. 여기서 보여야 할
+    것은 크기가 아니라 **얼마나 깎였고 순서가 어떻게 뒤집혔는가**이므로, 이동을
+    선분으로 그리고 도착점(편상관)에 부트스트랩 CI 를 붙인다.
+
+    입력은 `stats.confound_table()` 의 반환(편상관 내림차순)이다. 정렬을 그대로
+    쓴다 — y축 위에서 아래로가 곧 통제 후 우선순위다.
+    """
+    df = table.dropna(subset=["raw", "partial"]).iloc[::-1]   # 수평 축은 아래→위
+    labels = df["channel_label"].tolist()
+    colors = [theme.CHANNEL_COLOR_BY_LABEL.get(l, theme.SERIES[0]) for l in labels]
+
+    fig = go.Figure()
+    for label, color, raw, partial in zip(labels, colors, df["raw"], df["partial"]):
+        fig.add_trace(go.Scatter(
+            x=[raw, partial], y=[label, label], mode="lines",
+            line=dict(color=color, width=3), opacity=0.35,
+            hoverinfo="skip", showlegend=False,
+        ))
+    fig.add_trace(go.Scatter(
+        x=df["raw"], y=labels, mode="markers", name="원 상관",
+        marker=dict(size=MARKER_SIZE + 2, color=theme.INK["surface"],
+                    line=dict(color=theme.INK["muted"], width=2)),
+        hovertemplate=_hover("%{y}", "원 상관 r %{x:.3f}"),
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["partial"], y=labels, mode="markers+text", name="요일 통제 후",
+        marker=dict(size=MARKER_SIZE + 4, color=colors),
+        error_x=dict(
+            type="data", symmetric=False,
+            array=(df["ci_hi"] - df["partial"]).to_numpy(),
+            arrayminus=(df["partial"] - df["ci_lo"]).to_numpy(),
+            color=theme.INK["axis"], thickness=1.5, width=5,
+        ),
+        text=[f"{v:.3f}" for v in df["partial"]],
+        textposition="bottom center",
+        textfont=dict(color=theme.INK["secondary"], size=11),
+        customdata=np.column_stack([df["p"].to_numpy(), df["ci_lo"].to_numpy(),
+                                    df["ci_hi"].to_numpy()]),
+        hovertemplate=_hover("%{y}", "편상관 r %{x:.3f}",
+                             "95% CI [%{customdata[1]:.3f}, %{customdata[2]:.3f}]",
+                             "p %{customdata[0]:.4f}"),
+    ))
+    fig.add_vline(x=0, line=dict(color=theme.INK["axis"], width=1, dash="dot"))
+    fig.update_layout(
+        height=64 * max(len(labels), 1) + 110,
+        xaxis=dict(range=[-0.35, 1.05], title="Pearson 상관계수 (0 = 무관)"),
+        yaxis=dict(title=""),
+        margin=dict(l=8, r=32, t=8, b=36),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    return fig
+
+
 def segment_donut(seg: pd.DataFrame) -> go.Figure:
     """VIP 모수 구성 도넛.
 

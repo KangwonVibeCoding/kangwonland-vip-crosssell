@@ -222,6 +222,33 @@ def fmt_pct(value: object, digits: int = 1) -> str:
         return "—"
 
 
+def josa(word: str, pair: str = "은는") -> str:
+    """받침 유무에 맞는 조사를 고른다. `pair` 는 (받침 있음, 없음) 순서.
+
+    문장을 데이터에서 생성하면 채널 이름이 그때그때 바뀐다 — '지역특산품는'
+    같은 문장이 발표 화면에 그대로 뜨는 것을 막는 최소 장치다.
+    """
+    if not word:
+        return pair[1]
+    ch = word.strip()[-1:]
+    if not ch or not ("가" <= ch <= "힣"):
+        return pair[1]           # 숫자·영문 끝은 판정하지 않는다
+    return pair[0] if (ord(ch) - 0xAC00) % 28 else pair[1]
+
+
+def fmt_p(value: object) -> str:
+    """p 값 표기. 아주 작은 값을 0 으로 반올림해 보여주지 않는다."""
+    try:
+        if value is None or pd.isna(value):
+            return "—"
+        p = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if p < 0.001:
+        return "p<0.001"
+    return f"p={p:.3f}"
+
+
 def pct_delta(current: float | None, previous: float | None) -> tuple[str, int]:
     """전기간 대비 증감률 문자열과 방향."""
     try:

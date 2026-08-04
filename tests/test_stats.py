@@ -106,6 +106,20 @@ def period_a(real_data):
     return ars_a, sales_a
 
 
+@pytest.fixture(scope="module")
+def demo_frame():
+    """성별·연령 — **기간 집계**라 일자별 분해가 불가능하다.
+
+    이 형태가 곧 VRB 가 유입의 상수배가 되는 원인이다(비율만 차용 → vip_ratio 상수).
+    비율 자체는 corr(inflow, vrb) 에 영향이 없으므로 합성 표로 충분하다.
+    """
+    return pd.DataFrame({
+        "gender": ["남", "여", "남", "여"],
+        "age_band": ["40대", "40대", "20대", "20대"],
+        "visitors": [300, 200, 60, 40],
+    })
+
+
 # ── 로딩 / 스키마 ─────────────────────────────────────────────────────
 def test_sales_row_counts(real_data):
     counts = real_data["sales"]["channel"].value_counts().to_dict()
@@ -578,35 +592,57 @@ def test_headline_corr_falls_back_to_tickets(period_a):
 #
 # 계산 근거: scripts/diagnose_confound.py (부트스트랩 CI·순열검정 p 포함)
 EXPECTED_PARTIAL_CORR = {
-    S.CH_CASINO: 0.370,   # 0.801 에서 하락. p=0.044 로 경계선
-    S.CH_ROOM: 0.558,     # 0.740 에서 하락. p=0.0015 로 유일하게 견고
-    S.CH_LOCAL: 0.176,    # 0.380 에서 하락. p=0.357 — 유의하지 않다
+    S.CH_CASINO: 0.370,   # 0.801 에서 하락. p=0.043 로 경계선
+    S.CH_ROOM: 0.558,     # 0.740 에서 하락. p=0.002 로 유일하게 견고
+    S.CH_LOCAL: 0.176,    # 0.380 에서 하락. p=0.344 — 유의하지 않다
 }
-
-
-def _residual_on_dow(y: np.ndarray, dow: np.ndarray) -> np.ndarray:
-    """요일로 설명되는 변동을 제거한 잔차. 더미는 6개(월요일이 기준 범주)."""
-    X = np.column_stack([np.ones(len(y))]
-                        + [(dow == d).astype(float) for d in range(1, 7)])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    return y - X @ beta
+# 순열검정 p 는 몬테카를로 추정이지만 seed 가 고정(S.CONFOUND_SEED)이라 값이
+# 재현된다. 판정 문구가 바뀌면 처방 카드의 문장이 통째로 달라지므로 같이 박아둔다.
+EXPECTED_PARTIAL_P = {S.CH_CASINO: 0.043, S.CH_ROOM: 0.002, S.CH_LOCAL: 0.344}
+EXPECTED_VERDICT = {S.CH_CASINO: "간신히 유의", S.CH_ROOM: "견고",
+                    S.CH_LOCAL: "유의하지 않음"}
 
 
 def test_partial_corr_controlling_dow(period_a):
-    """요일을 통제해도 남는 상관 — README 가 인용하는 수치."""
+    """요일을 통제해도 남는 상관 — README·대시보드가 인용하는 수치."""
     ars_a, sales_a = period_a
+    table = stats.confound_table(ars_a, sales_a)
+    assert not table.empty
+    got = {r.channel: r.partial for r in table.itertuples()}
+    raw = {r.channel: r.raw for r in table.itertuples()}
     for channel, expected in EXPECTED_PARTIAL_CORR.items():
-        x_s, y_s = stats.align(
-            ars_a.set_index("date")["recv_total"], stats.daily_qty(sales_a, channel)
+        assert got[channel] == pytest.approx(expected, abs=TOL), (
+            f"{channel} 편상관 {got[channel]:.3f} != {expected}"
         )
-        dow = x_s.index.dayofweek.to_numpy()
-        got = stats.pearson(
-            _residual_on_dow(x_s.to_numpy(float), dow),
-            _residual_on_dow(y_s.to_numpy(float), dow),
-        )
-        assert got == pytest.approx(expected, abs=0.01), (
-            f"{channel} 편상관 {got:.3f} != {expected}"
-        )
+        # 원 상관은 corr_table 과 같은 값이어야 한다 — 배너가 "0.801 → 0.370" 처럼
+        # 두 값을 한 줄에 붙여 쓰기 때문에 출처가 갈리면 화면에서 어긋난다.
+        assert raw[channel] == pytest.approx(
+            EXPECTED_CORR[("recv_total", channel)][0], abs=TOL)
+        assert got[channel] < raw[channel], "요일을 빼면 상관은 줄어야 한다"
+
+    # 단일 계열 API 도 같은 값을 준다 (탭에서 채널 하나만 볼 때 쓰는 경로)
+    single = stats.partial_corr_dow(
+        ars_a.set_index("date")["recv_total"], stats.daily_qty(sales_a, S.CH_ROOM))
+    assert single == pytest.approx(EXPECTED_PARTIAL_CORR[S.CH_ROOM], abs=TOL)
+
+
+def test_partial_corr_significance_is_reproducible(period_a):
+    """부트스트랩 CI·순열검정 p — seed 고정이라 새로고침해도 같은 값이어야 한다."""
+    ars_a, sales_a = period_a
+    table = stats.confound_table(ars_a, sales_a).set_index("channel")
+    again = stats.confound_table(ars_a, sales_a).set_index("channel")
+
+    for channel, expected_p in EXPECTED_PARTIAL_P.items():
+        row = table.loc[channel]
+        assert row["p"] == pytest.approx(expected_p, abs=0.01)
+        assert row["p"] == again.loc[channel, "p"], "같은 입력에 p 가 흔들린다"
+        assert row["verdict"] == EXPECTED_VERDICT[channel]
+        assert row["ci_lo"] < row["partial"] < row["ci_hi"]
+
+    # CI 가 0을 포함하는가 = 유의성의 시각적 근거. 특산품만 0을 넘나든다.
+    assert table.loc[S.CH_LOCAL, "ci_lo"] < 0 < table.loc[S.CH_LOCAL, "ci_hi"]
+    assert table.loc[S.CH_ROOM, "ci_lo"] > 0
+    assert table.loc[S.CH_CASINO, "ci_lo"] > 0
 
 
 def test_roomservice_is_the_robust_channel(period_a):
@@ -619,19 +655,57 @@ def test_roomservice_is_the_robust_channel(period_a):
     assert EXPECTED_PARTIAL_CORR[S.CH_ROOM] > EXPECTED_PARTIAL_CORR[S.CH_CASINO]
 
     ars_a, sales_a = period_a
-    got = {}
-    for channel in (S.CH_CASINO, S.CH_ROOM):
-        x_s, y_s = stats.align(
-            ars_a.set_index("date")["recv_total"], stats.daily_qty(sales_a, channel)
-        )
-        dow = x_s.index.dayofweek.to_numpy()
-        got[channel] = stats.pearson(
-            _residual_on_dow(x_s.to_numpy(float), dow),
-            _residual_on_dow(y_s.to_numpy(float), dow),
-        )
+    table = stats.confound_table(ars_a, sales_a)
+    got = {r.channel: r.partial for r in table.itertuples()}
     assert got[S.CH_ROOM] > got[S.CH_CASINO], (
         f"요일 통제 후 순서가 뒤집히지 않았습니다: {got}"
     )
+    # 표는 편상관 내림차순 = 화면에 그려지는 우선순위 그 자체다
+    assert table.iloc[0]["channel"] == S.CH_ROOM
+    assert stats.confound_flips_order(table), "순서 역전이 감지되지 않았습니다"
+
+
+def test_confound_needs_enough_days(period_a):
+    """표본이 짧으면 편상관을 내지 않는다 — 요일 더미 6개를 세울 수 없다.
+
+    없는 근거를 만드는 대신 빈 표를 돌려주고, 뷰는 통제 절을 통째로 감춘다.
+    """
+    ars_a, sales_a = period_a
+    short = ars_a.loc[ars_a["date"] <= ars_a["date"].min() + pd.Timedelta(days=6)]
+    assert stats.confound_table(short, sales_a).empty
+    assert stats.confound_table(ars_a.iloc[0:0], sales_a).empty
+    assert stats.confound_table(ars_a, sales_a.iloc[0:0]).empty
+
+
+def test_prescription_order_follows_partial_corr(period_a):
+    """D+0 처방 카드가 원 래그 상관이 아니라 편상관 순서를 따르는지.
+
+    래그 상관만 쓰면 카드가 '카지노 식음 r=+0.796' 으로 시작해 README 와 정반대
+    우선순위를 말한다 — 발표에서 가장 아픈 종류의 불일치다.
+    """
+    ars_a, sales_a = period_a
+    infl = inflow_mod.compute_cii(ars_a).rename(columns={"cii": "inflow"})
+    best = lag.best_lags(lag.lag_matrix(infl, sales_a, max_lag=3))
+    dow = inflow_mod.dow_profile_table(ars_a, sales_a)
+    month = inflow_mod.month_profile_table(sales_a)
+    confound = stats.confound_table(ars_a, sales_a)
+
+    cards = lag.prescriptions(best, dow, month, confound)
+    d0 = next(c for c in cards if c["title"].startswith("D+0"))
+    assert d0["targets"][0] == S.CHANNEL_LABEL[S.CH_ROOM], (
+        f"D+0 1순위가 룸서비스가 아닙니다: {d0['targets']}"
+    )
+    assert d0["evidence"].startswith(S.CHANNEL_LABEL[S.CH_ROOM])
+    assert "편상관" in d0["evidence"]
+
+    # D+1(특산품)은 요일 통제 후 유의하지 않다 — 근거를 요일 프로파일로 밝힌다
+    d1 = next(c for c in cards if c["title"].startswith("D+1"))
+    assert "요일 프로파일" in d1["detail"]
+
+    # confound 를 주지 않으면 이전 동작(래그 상관 근거)이 그대로 유지된다
+    plain = lag.prescriptions(best, dow, month)
+    plain_d0 = next(c for c in plain if c["title"].startswith("D+0"))
+    assert "편상관" not in plain_d0["evidence"]
 
 
 def test_local_goods_sunday_spike_carries_the_d1_claim(period_a):
@@ -656,3 +730,160 @@ def test_local_goods_sunday_spike_carries_the_d1_claim(period_a):
     # 유입은 토요일이 피크 — 판매가 하루 뒤인 구조
     ars_dow = stats.dow_index(ars_a.set_index("date")["tickets"])
     assert int(ars_dow.idxmax()) == SAT
+
+
+# ── VTS 가 유입 지수의 복사본이 아닌지 ────────────────────────────────
+# 이 지수의 존재 이유는 "유입만 보면 이미 잘 파는 날을 또 공략한다"이다. 그런데
+# 성별·연령이 기간 집계로만 제공되어 vip_ratio 가 상수라서 VRB = tickets × 상수 가
+# 되고(실측 r=0.9988), base 축을 함께 쓰면 유입에 가중치를 두 번 주게 된다.
+# 그 상태의 실측이 corr(inflow, vts)=0.981 · 상위 10일 중 9일 동일이었다.
+EXPECTED_VRB_INFLOW_R = 0.9988      # base 축이 유입의 복사본이라는 증거
+MAX_VTS_INFLOW_R = 0.95             # 이 위로 올라가면 지수가 유입의 재탕이다
+
+
+def test_vrb_is_a_constant_multiple_of_inflow(period_a, demo_frame):
+    """VRB 가 유입의 상수배임을 고정한다 — base 축을 빼는 근거 그 자체."""
+    ars_a, sales_a = period_a
+    infl = inflow_mod.build_inflow(ars_a, sales_a)
+    vrb = vip.compute_vrb(infl, demo_frame)
+
+    assert vrb["vip_ratio"].nunique() == 1, "기간 집계라 VIP 비율은 상수여야 한다"
+    r = stats.pearson(infl["inflow"], vrb["vrb"])
+    assert r == pytest.approx(EXPECTED_VRB_INFLOW_R, abs=0.005)
+    assert vip.base_is_redundant(infl["inflow"], vrb["vrb"])
+
+    # 일자별 모수가 들어오면 축이 살아나야 한다 (미래 데이터 대비 계약)
+    varied = vrb.assign(vrb=np.linspace(1.0, 2.0, len(vrb)) * vrb["vrb"].mean())
+    assert not vip.base_is_redundant(infl["inflow"], varied["vrb"])
+
+
+def test_vts_is_not_a_copy_of_inflow(period_a, demo_frame):
+    """base 축을 빼고 그 몫을 headroom 으로 넘긴 뒤의 실측 — 유입과 갈라져야 한다."""
+    ars_a, sales_a = period_a
+    infl = inflow_mod.build_inflow(ars_a, sales_a)
+    vrb = vip.compute_vrb(infl, demo_frame)
+    # 사이드바가 넘기는 4축 가중치를 그대로 줘도 base 는 빠져야 한다
+    vts = vip.compute_vts(infl, vrb, sales_a, dict(S.VTS_WEIGHTS))
+
+    assert vts["base_signal"].iloc[0] != "VRB", "base 축이 그대로 쓰이고 있다"
+    diag = vip.vts_vs_inflow(vts)
+    assert diag["corr"] < MAX_VTS_INFLOW_R, (
+        f"VTS 가 유입 지수의 복사본이다 (r={diag['corr']:.3f})"
+    )
+    assert diag["new_days"], "유입 상위일과 다른 날이 하나도 없다"
+
+    # base 를 그냥 빼고 재정규화하면 inflow 실효 비중이 0.35 → 0.47 로 오히려
+    # 커진다. headroom 으로 이관해야 유입 비중이 유지된다 — 그 함정을 고정한다.
+    naive = {k: v for k, v in S.VTS_WEIGHTS.items() if k != "base"}
+    naive_share = naive["inflow"] / sum(naive.values())
+    ours_share = (S.VTS_WEIGHTS_NO_BASE["inflow"]
+                  / sum(S.VTS_WEIGHTS_NO_BASE.values()))
+    assert ours_share < naive_share
+    assert vip.drop_base_weight(dict(S.VTS_WEIGHTS)) == S.VTS_WEIGHTS_NO_BASE
+
+
+def test_campaign_calendar_marks_inflow_only_misses(period_a, demo_frame):
+    """캘린더가 '유입만 봤다면 놓쳤을 날'을 표에 드러내는지."""
+    ars_a, sales_a = period_a
+    infl = inflow_mod.build_inflow(ars_a, sales_a)
+    vrb = vip.compute_vrb(infl, demo_frame)
+    vts = vip.compute_vts(infl, vrb, sales_a)
+    cal = vip.campaign_calendar(vts)
+
+    assert {"inflow_rank", "inflow_only_miss"} <= set(cal.columns)
+    assert cal["inflow_only_miss"].any(), "차이가 나는 날이 표에 없다"
+    # 표시된 날은 실제로 유입 상위 N일 밖이어야 한다
+    top_inflow = set(vts.nlargest(len(cal), "inflow")["date"])
+    for row in cal.itertuples():
+        assert row.inflow_only_miss == (row.date not in top_inflow)
+    assert cal["inflow_rank"].min() >= 1
+
+
+# ── CSM 표본 요건이 창 길이·채널 스케일을 따라가는지 ──────────────────
+# 절대 요건(5일·10개)만 두면 731일 창에서는 게이트가 없는 것과 같았다:
+#   lift 최대 24,027 · 10 초과 63종 · '송이갈비탕'(2년 316개) lift 102
+# 31일 창에서도 상위 6종의 판매량이 205/109/26/16/15/13 개로, 실행할 수 없는
+# 희소 상품이 CSM 상위를 점령했다. 아래 두 테스트가 그 회귀를 막는다.
+MAX_PLAUSIBLE_LIFT = 10.0
+EXPECTED_GATE_A = {"min_days": 7, "min_qty": {S.CH_CASINO: 129.0, S.CH_LOCAL: 40.0,
+                                              S.CH_ROOM: 16.0}}
+EXPECTED_GATE_FULL = {"min_days": 147, "min_qty": {S.CH_CASINO: 983.0,
+                                                   S.CH_LOCAL: 356.0, S.CH_ROOM: 87.0}}
+
+
+@pytest.fixture(scope="module")
+def full_window(real_data):
+    """2년 창 — 절대 요건이 무력해지는 구간(이 회귀의 본체)."""
+    sales = real_data["sales"]
+    ars = real_data["ars"]
+    ars_w = ars.loc[ars["date"].between(SALES_START, SALES_END)]
+    return ars_w, sales
+
+
+def test_sample_gate_scales_with_window_and_channel(period_a, full_window):
+    """게이트가 창 길이와 채널 스케일을 따라가는지."""
+    _, sales_a = period_a
+    _, sales_full = full_window
+
+    gate_a = crosssell.sample_gate(sales_a)
+    gate_full = crosssell.sample_gate(sales_full)
+
+    assert gate_a["min_days"] == EXPECTED_GATE_A["min_days"]
+    assert gate_full["min_days"] == EXPECTED_GATE_FULL["min_days"]
+    for channel, expected in EXPECTED_GATE_A["min_qty"].items():
+        assert gate_a["min_qty"][channel] == pytest.approx(expected, rel=0.02)
+    for channel, expected in EXPECTED_GATE_FULL["min_qty"].items():
+        assert gate_full["min_qty"][channel] == pytest.approx(expected, rel=0.02)
+
+    # 채널 스케일 차(카지노 식음 : 룸서비스 ≈ 10배)가 요건에 반영돼야 한다.
+    # 공통 절대값을 쓰면 작은 채널이 통째로 탈락한다 — 실제로 그랬다.
+    assert gate_a["min_qty"][S.CH_CASINO] > gate_a["min_qty"][S.CH_ROOM] * 3
+    assert gate_full["min_days"] > gate_a["min_days"] * 10
+
+
+def test_lift_does_not_explode_on_long_windows(period_a, full_window):
+    """긴 창에서 희소 상품의 lift 가 튀지 않는지 — ③ 회귀의 핵심."""
+    for ars_w, sales_w in (period_a, full_window):
+        infl = inflow_mod.build_inflow(ars_w, sales_w)
+        lift = crosssell.compute_lift(sales_w, infl)
+        valid = lift["lift"].dropna()
+        assert not valid.empty
+        assert np.isfinite(valid).all()
+        assert valid.max() < MAX_PLAUSIBLE_LIFT, (
+            f"lift 최대 {valid.max():,.1f} — 표본 잡음이 다시 새고 있다"
+        )
+
+        gate = lift.attrs["gate"]
+        assert gate["dropped"] > 0, "게이트가 아무것도 거르지 않았다"
+        # 스무딩 상수의 설계 성질: 중앙값 규모 상품이 저유입일에 전혀 안 팔려도 lift ≤ 2
+        hi_total = float(lift["hi_qty"].sum())
+        median_share = gate["smooth_qty"] / hi_total
+        assert (median_share + gate["alpha"]) / gate["alpha"] <= 2.05
+
+
+def test_csm_top_is_not_a_rounding_error(period_a, full_window):
+    """CSM 상위가 실행 가능한 물량을 가진 상품인지 (희소 상품 점령 방지)."""
+    for ars_w, sales_w in (period_a, full_window):
+        infl = inflow_mod.build_inflow(ars_w, sales_w)
+        csm = crosssell.compute_csm(sales_w, infl)
+        gate = csm.attrs["gate"]
+        top = crosssell.top_items(csm, n=6, exclude_comp=True)
+        days = sales_w.groupby("item_id")["date"].nunique()
+        for row in top.itertuples():
+            if pd.isna(row.lift):
+                continue          # lift 미계산 상품은 물량·마진으로만 오른 것
+            assert row.total_qty >= gate["min_qty"][row.channel]
+            assert int(days.get(row.item_id, 0)) >= gate["min_days"]
+
+
+def test_bundles_are_vip_tier(period_a, full_window):
+    """번들 후보가 VIP 티어인지 — 카드가 '프리미엄 × 프리미엄'이라 적기 때문."""
+    for ars_w, sales_w in (period_a, full_window):
+        infl = inflow_mod.build_inflow(ars_w, sales_w)
+        csm = crosssell.compute_csm(sales_w, infl)
+        bundles = crosssell.recommend_bundles(csm, sales_w, top_n=3)
+        assert len(bundles) == 3
+        labels = {S.TIER_LABEL[S.TIER_PREMIUM], S.TIER_LABEL[S.TIER_BUNDLE]}
+        for b in bundles:
+            assert b["room_tier"] in labels and b["local_tier"] in labels
+            assert b["co_days"] > 0

@@ -63,7 +63,22 @@ def test_headline_correlation_is_real(app):
     blob = " ".join(m.value for m in app.markdown)
     if "데이터가 겹치지 않습니다" in blob:
         pytest.skip("기본 구간에 조인 가능한 데이터가 없음")
-    assert "상관 r = 0.80" in blob, "가설 검증 배너의 상관계수가 실측값이 아닙니다"
+    assert "r = 0.80" in blob, "가설 검증 배너의 상관계수가 실측값이 아닙니다"
+
+
+def test_headline_shows_confound_controlled_value(app):
+    """배너가 원 상관만 팔지 않는지 — 요일 통제 후 값이 같은 줄에 있어야 한다.
+
+    r=0.80 의 절반 이상은 주말 효과다. 배너에서 0.80 만 보고 스크롤하지 않은
+    사람이 반쪽짜리 근거를 가져가지 않도록, 통제 후 값(0.56)을 같이 띄운다.
+    """
+    blob = " ".join(m.value for m in app.markdown)
+    if "데이터가 겹치지 않습니다" in blob:
+        pytest.skip("기본 구간에 조인 가능한 데이터가 없음")
+    assert "요일을 통제하면 0.56" in blob, "배너에 요일 통제 후 상관이 없습니다"
+    assert "요일 교란 통제" in blob, "요일 교란 통제 절이 렌더되지 않았습니다"
+    # 편상관 1위(룸서비스)가 배너 칩 맨 앞 = 통제 후 우선순위가 화면에 드러난다
+    assert "0.740 → 0.558" in blob, "채널별 원 상관 → 편상관 병기가 없습니다"
 
 
 def test_sidebar_widgets_have_defaults(app):

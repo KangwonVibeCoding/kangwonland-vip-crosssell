@@ -8,6 +8,9 @@
     지역특산품  D+1 (+0.467)  익일 — 체크아웃 선물 구매
 
 "유입 피크일 당일엔 F&B, 익일 오전엔 특산품 쿠폰."
+
+시차 상관은 요일을 통제하지 않은 값이므로, 같은 구간의 편상관을 함께 계산해
+집행 순서와 캡션에 반영한다 — 통제 후에는 룸서비스가 카지노 식음보다 강하다.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import streamlit as st
 from config import settings as S
 from src.analysis import inflow as inflow_mod
 from src.analysis import lag as lag_mod
+from src.analysis import stats
 from src.ui import charts
 from src.ui import components as C
 
@@ -39,6 +43,9 @@ def render(ctx: dict) -> None:
     )
     matrix = lag_mod.lag_matrix(infl, sales, max_lag=fs.max_lag)
     best = lag_mod.best_lags(matrix)
+    # 래그 상관은 요일을 통제하지 않는다. 같은 구간의 편상관을 옆에 놓아야
+    # 히트맵의 큰 값이 "주말이라 붐빈다"인지 "유입 그 자체"인지 구분된다.
+    confound = stats.confound_table(ars, sales)
 
     if matrix.empty or best.empty:
         C.empty_state("이 구간에서는 시차 상관을 계산할 수 없습니다.",
@@ -74,6 +81,21 @@ def render(ctx: dict) -> None:
         badge="실측 조인",
     )
     st.plotly_chart(charts.lag_heatmap(matrix), width="stretch", key="tm_heatmap")
+    if not confound.empty:
+        lead = confound.iloc[0]
+        C.insight_box(
+            [
+                "히트맵의 값은 요일을 통제하지 않은 상관이다. 같은 구간에서 요일 "
+                "더미를 빼고 다시 재면 " + " · ".join(
+                    f"{r.channel_label} {r.raw:+.3f} → {r.partial:+.3f}"
+                    f"({C.fmt_p(r.p)})" for r in confound.itertuples()
+                ) + " 이다.",
+                f"통제 후 남는 가장 견고한 채널은 {lead['channel_label']}"
+                f"({lead['partial']:.3f}, {lead['verdict']})이며, 아래 실행 처방의 "
+                "D+0 집행 순서는 이 순서를 따른다.",
+            ],
+            title="요일을 통제하면 (탭1 상세)",
+        )
     C.table_view(
         matrix.assign(
             시차=matrix["lag"].map(lambda k: f"D+{k}"),
@@ -165,7 +187,7 @@ def render(ctx: dict) -> None:
         "위 수치에서 자동 생성된다 — 필터를 바꾸면 처방도 함께 바뀐다.",
         badge="실측 조인",
     )
-    cards = lag_mod.prescriptions(best, dow_table, month_table)
+    cards = lag_mod.prescriptions(best, dow_table, month_table, confound)
     if not cards:
         C.empty_state("처방을 생성할 근거가 부족합니다.")
     else:
@@ -174,8 +196,24 @@ def render(ctx: dict) -> None:
                 C.prescription_card(card["title"], card["targets"],
                                     card["detail"], card["evidence"])
 
-    C.caveat(
-        "상관관계는 인과관계가 아닙니다. 표본은 유입·판매가 겹치는 "
-        f"{int(matrix['n_days'].max())}일이며, 지연 상관은 주말 효과와 분리되지 "
-        "않았을 수 있습니다."
-    )
+    # 주말 효과는 "분리되지 않았을 수 있다"고 미뤄 둘 문제가 아니다 — 실제로
+    # 분리해서 재 봤고, 그 결과가 처방의 순서를 바꿨다. 측정한 것을 추측형으로
+    # 쓰면 이미 한 일을 안 한 것처럼 보인다.
+    if not confound.empty:
+        C.caveat(
+            "상관관계는 인과관계가 아닙니다. 표본은 유입·판매가 겹치는 "
+            f"{int(matrix['n_days'].max())}일입니다. 주말 효과는 요일 더미로 "
+            "통제해 실제로 분리했고(" + " · ".join(
+                f"{r.channel_label} {r.raw:.3f}→{r.partial:.3f}"
+                for r in confound.itertuples()
+            ) + f"), 통제 후에도 {confound.iloc[0]['channel_label']}만 "
+            f"{confound.iloc[0]['verdict']} 판정입니다. 계산 근거는 탭1 "
+            "'요일 교란 통제' 절과 scripts/diagnose_confound.py 에 있습니다."
+        )
+    else:
+        C.caveat(
+            "상관관계는 인과관계가 아닙니다. 표본은 유입·판매가 겹치는 "
+            f"{int(matrix['n_days'].max())}일이며, 이 구간은 표본이 짧아 요일 교란 "
+            f"통제(최소 {S.CONFOUND_MIN_DAYS}일)를 계산하지 못했습니다 — "
+            "지연 상관에 주말 효과가 섞여 있을 수 있습니다."
+        )

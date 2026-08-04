@@ -38,44 +38,20 @@ from config import settings as S                         # noqa: E402
 from src.analysis import stats                           # noqa: E402
 from src.data import loaders                             # noqa: E402
 
-SEED = 42
-B = 10_000
-DOW_NAMES = ("월", "화", "수", "목", "금", "토", "일")
+SEED = S.CONFOUND_SEED
+B = S.CONFOUND_RESAMPLES
+DOW_NAMES = S.DOW_NAMES
 CHANNELS = ((S.CH_CASINO, "카지노 식음"), (S.CH_ROOM, "룸서비스"), (S.CH_LOCAL, "지역특산품"))
 
 rng = np.random.default_rng(SEED)
 
-
-# ── 통계 프리미티브 (scipy 없이) ───────────────────────────────────────
-def pearson(x: np.ndarray, y: np.ndarray) -> float:
-    a, b = x - x.mean(), y - y.mean()
-    denom = np.sqrt((a * a).sum() * (b * b).sum())
-    return float((a * b).sum() / denom) if denom else float("nan")
-
-
-def residual_on_dow(y: np.ndarray, dow: np.ndarray) -> np.ndarray:
-    """요일로 설명되는 변동을 제거한 잔차.
-
-    더미는 6개만 만든다(월요일이 기준 범주). 7개를 넣으면 절편과 공선성이 생긴다.
-    """
-    dummies = [(dow == d).astype(float) for d in range(1, 7)]
-    X = np.column_stack([np.ones(len(y)), *dummies])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    return y - X @ beta
-
-
-def bootstrap_ci(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-    idx = rng.integers(0, len(x), size=(B, len(x)))
-    vals = np.array([pearson(x[i], y[i]) for i in idx])
-    vals = vals[np.isfinite(vals)]
-    return float(np.percentile(vals, 2.5)), float(np.percentile(vals, 97.5))
-
-
-def permutation_p(x: np.ndarray, y: np.ndarray) -> float:
-    """H0: 두 계열은 무관. y 를 섞어 |r| 이 관측치 이상 나오는 비율."""
-    observed = abs(pearson(x, y))
-    hits = sum(abs(pearson(x, rng.permutation(y))) >= observed for _ in range(B))
-    return (hits + 1) / (B + 1)
+# 통계 프리미티브는 `src.analysis.stats` 에 있다 — 대시보드가 화면에 띄우는 것과
+# **같은 함수**여야 이 스크립트가 검산 도구로 의미를 갖는다. 여기서 다시 구현하면
+# 두 구현이 조용히 갈라지고, 그때 어느 쪽이 README 의 근거인지 알 수 없게 된다.
+pearson = stats.pearson
+residual_on_dow = stats.residual_on_dow
+bootstrap_ci = stats.bootstrap_ci
+permutation_p = stats.permutation_p
 
 
 def diff_ci(x: np.ndarray, y0: np.ndarray, y1: np.ndarray) -> tuple[float, float, float]:
@@ -105,20 +81,17 @@ def main() -> int:
     print(f"구간 A ({start:%Y-%m-%d} ~ {end:%Y-%m-%d})  ·  부트스트랩/순열 {B:,}회  ·  seed={SEED}")
     print("=" * 78)
 
+    # 대시보드가 탭1 '요일 교란 통제' 절에 띄우는 바로 그 표다. 화면과 콘솔이
+    # 다른 코드로 같은 수치를 만들면 언젠가 갈라진다 — 같은 함수를 부른다.
     print("\n[1] 요일 통제 편상관 — 유입(recv_total) vs 채널 판매량\n")
-    print(f"{'채널':<12}{'원 r':>8}{'통제 후':>10}{'감소':>8}{'95% CI':>22}{'p':>9}")
+    print(f"{'채널':<12}{'원 r':>8}{'통제 후':>10}{'감소':>8}{'95% CI':>22}{'p':>9}{'판정':>10}")
     print("-" * 78)
-    for channel, label in CHANNELS:
-        x_s, y_s = stats.align(ars["recv_total"], stats.daily_qty(sales, channel))
-        x, y = x_s.to_numpy(float), y_s.to_numpy(float)
-        dow = x_s.index.dayofweek.to_numpy()
-
-        raw = pearson(x, y)
-        rx, ry = residual_on_dow(x, dow), residual_on_dow(y, dow)
-        partial = pearson(rx, ry)
-        lo, hi = bootstrap_ci(rx, ry)
-        print(f"{label:<12}{raw:>8.3f}{partial:>10.3f}{partial - raw:>8.3f}"
-              f"{f'[{lo:.3f}, {hi:.3f}]':>22}{permutation_p(rx, ry):>9.4f}")
+    # 정렬은 편상관 내림차순이다(= 화면 순서). 원 상관 순서와 다른 것이 요점이다.
+    table = stats.confound_table(ars.reset_index(), sales)
+    for row in table.itertuples():
+        ci = f"[{row.ci_lo:.3f}, {row.ci_hi:.3f}]"
+        print(f"{row.channel_label:<12}{row.raw:>8.3f}{row.partial:>10.3f}"
+              f"{row.delta:>8.3f}{ci:>22}{row.p:>9.4f}{row.verdict:>10}")
 
     print("\n[2] 원 상관의 부트스트랩 95% CI (요일 통제 전)\n")
     for channel, label in CHANNELS:

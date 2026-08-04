@@ -89,6 +89,35 @@ def compute_vrb(inflow: pd.DataFrame, demo: pd.DataFrame,
     )
 
 
+def base_is_redundant(inflow: pd.Series, vrb: pd.Series,
+                      threshold: float = S.VTS_BASE_REDUNDANT_R) -> bool:
+    """VRB 가 유입의 상수배인가 — 그렇다면 base 축은 inflow 축의 복사본이다.
+
+    성별·연령 데이터가 **기간 집계**로만 제공되어 `vip_ratio` 가 상수이므로
+    VRB = tickets × 상수 가 된다(실측 r=0.9988). ARS 가 없는 구간은 더 노골적이라
+    scale 자체가 inflow × 계수다.
+
+    비율이 상수인지 직접 보지 않고 상관으로 판정하는 이유는, 성별·연령 API 가
+    **일자별 데이터를 주기 시작하면 이 함수가 저절로 False 를 돌려주며 base 축이
+    복구되어야** 하기 때문이다. 분산이 없는(=순위 정보가 없는) 계열도 중복으로
+    본다 — 상수 축은 가중치만 먹고 순위를 바꾸지 않는다.
+    """
+    r = stats.pearson(inflow, vrb)
+    return (not np.isfinite(r)) or abs(r) >= threshold
+
+
+def drop_base_weight(weights: dict[str, float]) -> dict[str, float]:
+    """base 축 가중치를 headroom 으로 이관한다.
+
+    남은 축에 균등 분배하지 않는다. base 를 빼고 그냥 재정규화하면 inflow 비중이
+    0.35 → 0.47 로 **오히려 커져서** VTS 가 유입 지수에 더 가까워진다(실측 0.963).
+    이 지수의 존재 이유는 유입 상위일이 아닌 날을 찾는 것이므로 headroom 으로 옮긴다.
+    """
+    out = {k: v for k, v in weights.items() if k != "base"}
+    out["headroom"] = out.get("headroom", 0.0) + float(weights.get("base", 0.0))
+    return out
+
+
 def compute_vts(inflow: pd.DataFrame, vrb: pd.DataFrame, sales: pd.DataFrame,
                 weights: dict[str, float] | None = None) -> pd.DataFrame:
     """VIP 타겟 지수 (0~100) — 마케팅 집행 우선순위.
@@ -101,6 +130,12 @@ def compute_vts(inflow: pd.DataFrame, vrb: pd.DataFrame, sales: pd.DataFrame,
 
     headroom 이 핵심이다. 유입만 보면 "이미 잘 파는 날"을 또 공략하게 되는데,
     마케팅 여지는 오히려 attach rate 가 낮은 날에 있다.
+
+    ⚠ base 축은 VRB 가 유입의 상수배인 동안 **자동으로 빠진다**(`base_is_redundant`).
+    성별·연령이 기간 집계로만 제공되는 현재 데이터에서는 항상 그렇고, 그 상태로
+    두 축을 다 쓰면 유입에 0.60 을 준 것과 같아져 지수가 유입의 재탕이 된다.
+    어느 경로였는지는 결과의 `base_signal` 컬럼에 남는다 — CII 의 `pressure_signal`
+    과 같은 규약이다. **없는 신호를 가중치로 채워 넣지 않는다.**
     """
     weights = weights or S.VTS_WEIGHTS
     if inflow.empty:
@@ -142,6 +177,12 @@ def compute_vts(inflow: pd.DataFrame, vrb: pd.DataFrame, sales: pd.DataFrame,
         "proven": scoring.nrm(vip_v),
         "headroom": 1.0 - scoring.nrm(attach),
     }
+    redundant = base_is_redundant(df["inflow"], df["vrb"])
+    if redundant:
+        parts.pop("base")
+        weights = drop_base_weight(weights)
+    # 사이드바가 4축 가중치를 그대로 넘겨도 안전하다 — wsum 이 parts 에 없는 키를
+    # 버리고 남은 가중치로 재정규화한다 (CII 의 pressure 축과 같은 처리).
     vts = scoring.wsum(parts, weights)
 
     out = df.assign(
@@ -153,18 +194,58 @@ def compute_vts(inflow: pd.DataFrame, vrb: pd.DataFrame, sales: pd.DataFrame,
         headroom=parts["headroom"].to_numpy(),
         vts=vts.to_numpy(),
         vts_grade=scoring.grade(vts).to_numpy(),
+        base_signal=("유입과 중복 — 제외" if redundant else "VRB"),
     )
     return out.sort_values("date").reset_index(drop=True)
 
 
+def vts_vs_inflow(vts: pd.DataFrame, top_n: int = S.TOP_N_VTS_DAYS) -> dict:
+    """VTS 가 유입 지수와 얼마나 다른가 — 지수의 존재 이유를 수치로 검증한다.
+
+    반환: {corr, overlap, top_n, new_days(=유입 상위에는 없는 VTS 상위일)}
+
+    이 값을 화면에 띄우는 것이 요점이다. 겹침이 10/10 이면 VTS 를 볼 이유가 없고,
+    그 사실은 숨길 게 아니라 사용자가 알아야 할 정보다.
+    """
+    empty = {"corr": float("nan"), "overlap": 0, "top_n": 0, "new_days": []}
+    if vts.empty or "vts" not in vts.columns or "inflow" not in vts.columns:
+        return empty
+    k = min(top_n, len(vts))
+    if k == 0:
+        return empty
+    top_vts = vts.nlargest(k, "vts")
+    top_inflow = set(vts.nlargest(k, "inflow")["date"])
+    new_days = [d for d in top_vts["date"] if d not in top_inflow]
+    return {
+        "corr": stats.pearson(vts["inflow"], vts["vts"]),
+        "overlap": k - len(new_days),
+        "top_n": k,
+        "new_days": new_days,
+    }
+
+
 def campaign_calendar(vts: pd.DataFrame, top_n: int = S.TOP_N_VTS_DAYS) -> pd.DataFrame:
-    """VTS 상위 N일 = 캠페인 집행 캘린더. 대시보드의 최종 답."""
+    """VTS 상위 N일 = 캠페인 집행 캘린더. 대시보드의 최종 답.
+
+    `inflow_rank`(유입 순위)와 `inflow_only_miss`(유입 상위 N일에는 없는 날)를
+    같이 돌려준다. VTS 는 유입과 상관이 높을 수밖에 없는 지수라서(사람이 많은 날이
+    실제로 중요하다) **차이가 나는 날이 어디인지**를 표에 드러내야 이 지수를 볼
+    이유가 화면에서 증명된다.
+    """
     if vts.empty:
         return vts
     cols = ["date", "dow_name", "inflow", "vrb", "vip_qty", "headroom",
-            "vts", "vts_grade", "source", "is_estimated"]
+            "vts", "vts_grade", "source", "is_estimated", "base_signal"]
     have = [c for c in cols if c in vts.columns]
-    out = vts.sort_values("vts", ascending=False).head(top_n)[have].copy()
+
+    ranked = vts.assign(
+        inflow_rank=vts["inflow"].rank(ascending=False, method="min").astype("int64"),
+    )
+    top_inflow = set(vts.nlargest(min(top_n, len(vts)), "inflow")["date"])
+    out = ranked.sort_values("vts", ascending=False).head(top_n)[
+        [*have, "inflow_rank"]
+    ].copy()
+    out = out.assign(inflow_only_miss=~out["date"].isin(top_inflow))
     if "dow_name" not in out.columns:
         out = out.assign(
             dow_name=pd.to_datetime(out["date"]).dt.dayofweek.map(

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -15,6 +17,43 @@ from src.analysis import inflow as inflow_mod
 from src.analysis import scoring
 
 EPS = 1e-9
+
+
+def sample_gate(sales: pd.DataFrame) -> dict:
+    """lift 표본 요건을 **창 길이와 채널 스케일에 맞춰** 계산한다.
+
+    반환: {window_days, min_days, min_qty(채널→수량), smooth_qty}
+
+    두 축을 함께 건다.
+      · 판매일수 — 절대 5일과 창의 20% 중 큰 값. 절대값만 두면 731일 창에서
+        게이트가 사실상 사라진다(실측 1,688종 중 1,534종 통과, lift 최대 24,027).
+      · 수량 — 절대 10개와 **그 채널 상품 판매량 중앙값** 중 큰 값. 채널 공통
+        절대값을 쓰면 스케일 차(카지노 식음 : 룸서비스 ≈ 10배)에 막혀 한쪽 채널이
+        통째로 탈락한다. 중앙값을 쓰면 "채널 안에서 중간 이상 팔린 상품"이라는
+        같은 의미가 어느 창·어느 채널에서도 성립한다.
+
+    `smooth_qty` 는 가법 스무딩 상수의 분자로, 전체 상품 판매량의 중앙값이다
+    (채널을 섞은 값 — lift 의 share 자체가 전 채널 합계 기준이기 때문).
+
+    실측: 31일 창 → 7일 · 카지노 129 / 특산품 40 / 룸서비스 16개
+          731일 창 → 147일 · 카지노 983 / 특산품 356 / 룸서비스 87개
+    """
+    if sales.empty:
+        return {"window_days": 0, "min_days": S.LIFT_MIN_DAYS,
+                "min_qty": {}, "smooth_qty": float(S.LIFT_MIN_QTY)}
+
+    window_days = int(sales["date"].nunique())
+    min_days = int(max(S.LIFT_MIN_DAYS,
+                       math.ceil(window_days * S.LIFT_MIN_DAY_RATIO)))
+    per_item = sales.groupby(["channel", "item_id"])["qty"].sum()
+    by_channel = per_item.groupby(level="channel").quantile(S.LIFT_MIN_QTY_QUANTILE)
+    min_qty = {
+        str(ch): float(max(S.LIFT_MIN_QTY, v)) for ch, v in by_channel.items()
+    }
+    smooth_qty = float(max(S.LIFT_MIN_QTY,
+                           per_item.quantile(S.LIFT_MIN_QTY_QUANTILE)))
+    return {"window_days": window_days, "min_days": min_days,
+            "min_qty": min_qty, "smooth_qty": smooth_qty}
 
 
 def compute_lift(sales: pd.DataFrame, inflow: pd.DataFrame,
@@ -27,11 +66,19 @@ def compute_lift(sales: pd.DataFrame, inflow: pd.DataFrame,
 
     ⚠ 저유입일 판매가 0인 상품이 실제로 존재한다(구간 A 기준 72종). 그대로 나누면
     lift 가 수천만까지 발산해 CSM 상위를 독점한다. **가법 스무딩**을 적용해
-    "판매 1개분의 비중"(alpha)을 분자·분모에 더한다 — 표본이 없는 것을 무한한
-    탄력성으로 읽지 않기 위해서다.
+    alpha 를 분자·분모에 더한다 — 표본이 없는 것을 무한한 탄력성으로 읽지 않기
+    위해서다.
+
+    alpha 는 "판매 1개분의 비중"이 아니라 **중앙값 규모 상품 1개분의 비중**이다.
+    1개분으로 잡으면 총량이 커질수록 alpha 가 0에 수렴해(731일 창 실측 3.2e-07)
+    스무딩이 사실상 사라진다. 중앙값 기준으로 잡으면 창 길이와 무관하게 다음 성질이
+    성립한다: **중앙값 규모 상품이 저유입일에 하나도 안 팔려도 lift ≤ 2.**
+    관측이 두꺼운 상품일수록 alpha 의 영향은 자동으로 작아진다.
 
     고/저 구간을 나눌 표본이 부족하면 lift=NaN 으로 두고 CSM 은 나머지 신호로만
     계산한다 (조용히 1.0 으로 채우면 없는 근거를 있는 것처럼 보이게 된다).
+    반환 프레임의 `attrs` 에 게이트 값과 탈락 종수를 남긴다 — 화면에서 "몇 종을
+    무엇 때문에 뺐는지" 밝히기 위해서다.
     """
     cols = ["item_id", "lift", "hi_share", "lo_share", "hi_qty", "lo_qty"]
     if sales.empty:
@@ -59,8 +106,12 @@ def compute_lift(sales: pd.DataFrame, inflow: pd.DataFrame,
     hi_share = hi_q / hi_total
     lo_share = lo_q / lo_total
 
-    # 판매 1개분에 해당하는 비중 — 관측이 더 촘촘한(총량이 큰) 쪽을 기준으로 잡는다
-    alpha = 1.0 / max(hi_total, lo_total, 1.0)
+    # 표본 요건은 창 길이·채널 스케일을 따라간다 — 절대값만 두면 긴 창에서
+    # 게이트가 사라지고, 채널 공통값을 쓰면 작은 채널이 통째로 탈락한다
+    gate = sample_gate(sales)
+
+    # 중앙값 크기 상품 1개분에 해당하는 비중 — 관측이 촘촘한(총량이 큰) 쪽을 기준으로
+    alpha = gate["smooth_qty"] / max(hi_total, lo_total, 1.0)
 
     frame = pd.DataFrame({
         "item_id": items,
@@ -74,14 +125,22 @@ def compute_lift(sales: pd.DataFrame, inflow: pd.DataFrame,
     # 표본 요건 미달 상품은 lift 를 계산하지 않는다. 판매일수 2일짜리 상품도
     # lift 20~60 이 나오는데 그건 탄력성이 아니라 표본 잡음이다.
     per_item = sales.groupby("item_id").agg(
-        days=("date", "nunique"), qty=("qty", "sum")
+        days=("date", "nunique"), qty=("qty", "sum"), channel=("channel", "first")
     ).reindex(items)
+    qty_floor = per_item["channel"].map(gate["min_qty"]).astype("float64").fillna(
+        float(S.LIFT_MIN_QTY)
+    )
     enough = (
-        (per_item["days"].fillna(0) >= S.LIFT_MIN_DAYS)
-        & (per_item["qty"].fillna(0) >= S.LIFT_MIN_QTY)
+        (per_item["days"].fillna(0) >= gate["min_days"])
+        & (per_item["qty"].fillna(0) >= qty_floor)
     ).to_numpy()
 
-    return frame.assign(lift=lift.where(enough, np.nan))[cols]
+    out = frame.assign(lift=lift.where(enough, np.nan))[cols]
+    out.attrs["gate"] = {
+        **gate, "alpha": alpha,
+        "kept": int(enough.sum()), "dropped": int((~enough).sum()),
+    }
+    return out
 
 
 def compute_csm(sales: pd.DataFrame, inflow: pd.DataFrame,
@@ -114,11 +173,15 @@ def compute_csm(sales: pd.DataFrame, inflow: pd.DataFrame,
     # 남아 상위를 점령하므로(실측 CSM 75) 스코어 자체를 0 으로 눕힌다.
     csm = csm.mask(out["is_comp"].astype(bool), 0.0)
 
-    return out.assign(
+    scored = out.assign(
         channel_label=out["channel"].map(S.CHANNEL_LABEL),
         tier_label=out["tier"].map(S.TIER_LABEL),
         csm=csm.to_numpy(),
     ).sort_values("csm", ascending=False).reset_index(drop=True)
+    # 게이트 정보를 화면까지 들고 간다. 몇 종을 왜 뺐는지 밝히지 않으면 "전 상품을
+    # 다 본 순위"로 읽힌다 (attrs 는 merge·sort 를 거치며 사라질 수 있어 다시 단다).
+    scored.attrs["gate"] = dict(lift.attrs.get("gate", {}))
+    return scored
 
 
 def top_items(csm: pd.DataFrame, channel: str | None = None, n: int = S.TOP_N_ITEMS,
@@ -159,19 +222,32 @@ def recommend_bundles(csm: pd.DataFrame, sales: pd.DataFrame,
     = 아직 같이 안 팔리고 있다 = 교차판매 여지가 가장 크다.
 
     ⚠ 상시 판매 상품만 후보로 쓴다. 판매일수 1~2일짜리 상품은 CSM 이 높게 나와도
-    "재고가 그때만 있었던 것"이라 번들로 걸 수 없다.
+    "재고가 그때만 있었던 것"이라 번들로 걸 수 없다. 요건은 lift 게이트와 같은
+    이유로 창 길이에 비례한다 — 8일이라는 절대값은 2년 창에서 아무것도 거르지 못한다.
     """
     if csm.empty or sales.empty:
         return []
 
+    window_days = int(sales["date"].nunique())
+    min_days = max(S.BUNDLE_MIN_DAYS,
+                   math.ceil(window_days * S.BUNDLE_MIN_DAY_RATIO))
     days = sales.groupby("item_id")["date"].nunique()
-    regular = set(days.loc[days >= S.BUNDLE_MIN_DAYS].index)
+    regular = set(days.loc[days >= min_days].index)
     if not regular:
         return []
     pool = csm.loc[csm["item_id"].isin(regular)]
 
-    room = top_items(pool, S.CH_ROOM, n=top_n * 2, exclude_comp=True)
-    local = top_items(pool, S.CH_LOCAL, n=top_n * 2, exclude_comp=True)
+    # VIP 티어만 후보로 둔다. 물량 축(0.30)이 있어서 티어를 열어 두면 긴 구간에서
+    # '공기밥 × 특산품' 같은 조합이 상위로 올라온다 — 카드에 '프리미엄 × 프리미엄'
+    # 이라고 써 놓고 실제로는 일반 상품을 미는 셈이 된다.
+    vip_tiers = (S.TIER_PREMIUM, S.TIER_BUNDLE)
+    room = top_items(pool, S.CH_ROOM, n=top_n * 2, tiers=vip_tiers, exclude_comp=True)
+    local = top_items(pool, S.CH_LOCAL, n=top_n * 2, tiers=vip_tiers, exclude_comp=True)
+    if room.empty or local.empty:
+        # 티어 필터로 후보가 사라지면 번들을 만들지 못하는 것보다 낫다 — 전 티어로
+        # 한 번 더 시도하되, 카드에는 실제 티어가 그대로 표기된다.
+        room = top_items(pool, S.CH_ROOM, n=top_n * 2, exclude_comp=True)
+        local = top_items(pool, S.CH_LOCAL, n=top_n * 2, exclude_comp=True)
     if room.empty or local.empty:
         return []
 
