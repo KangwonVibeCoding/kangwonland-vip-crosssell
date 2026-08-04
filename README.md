@@ -456,10 +456,16 @@ CURATION  = 100 × (0.6·proximity + 0.4·업종 프리미엄)
 
 | 구분 | 사용 기술 |
 |---|---|
-| Frontend / Backend | Python 3.13, Streamlit 1.60 |
-| Data Processing | pandas 3.0, NumPy 2.5, PyArrow (parquet 캐시) |
-| Visualization | Plotly 6.9, **pydeck 0.9** (지도) |
+| Frontend / Backend | Python 3.13, Streamlit 1.60.0 |
+| Data Processing | pandas 3.0.5, NumPy 2.5.1, PyArrow 24.0 (parquet 캐시) |
+| Visualization | Plotly 6.9.0, **pydeck 0.9.3** (지도) |
 | Deployment | Streamlit Community Cloud |
+
+> **버전은 `==` 로 고정했습니다.** `>=` 로 두면 심사 기간 중 상위 버전이 나오는
+> 순간 앱이 조용히 바뀝니다. 다만 `pip freeze` 전체를 넣지는 않았습니다 — 개발
+> 환경이 Windows 라 `colorama`·`pywin32` 같은 플랫폼 전용 패키지가 섞여 Linux 인
+> Cloud 빌드를 깨뜨립니다. **직접 의존 7개만 고정**하고 전이 의존은 pip 해석에
+> 맡깁니다(45개 패키지로 해석되는 것까지 확인).
 
 > **지도는 Folium 이 아니라 pydeck 을 씁니다.** pydeck 은 Streamlit 이 이미 의존하고
 > 있어 **추가 패키지가 0개**입니다. Folium 은 `streamlit-folium` 별도 설치가 필요해
@@ -515,7 +521,7 @@ cd kangwonland-vip-crosssell
 # 2. 가상환경 + 의존성
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt       # 테스트까지 돌리려면: -r requirements-dev.txt
 
 # 3. API 키 설정 (선택 — 없어도 앱은 정상 동작합니다)
 copy .streamlit\secrets.toml.example .streamlit\secrets.toml
@@ -534,7 +540,8 @@ streamlit run app.py
 ### 테스트
 
 ```powershell
-pytest tests\ -q                                    # 전체 (62개)
+pip install -r requirements-dev.txt                  # pytest 는 여기에 있습니다
+pytest tests\ -q                                    # 전체 (93개)
 pytest tests\test_stats.py -q                       # 실측값 회귀만
 pytest tests\test_deploy_sample.py -q               # 배포 환경 시뮬레이션
 pytest tests\test_stats.py::test_headline_corr -v   # 단일 테스트

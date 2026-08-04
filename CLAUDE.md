@@ -15,8 +15,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Windows PowerShell 기준. venv 의 인터프리터를 **직접 경로로 호출**한다 (activate 없이도 동작).
 
 ```powershell
-# 의존성
+# 의존성 (배포용 == 핀 고정)
 & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+
+# 개발·테스트까지 (pytest 포함)
+& ".\.venv\Scripts\python.exe" -m pip install -r requirements-dev.txt
 
 # 원본 CSV 정규화: data/incoming (CP949, 한글 파일명) → data/raw (UTF-8, ASCII)
 $env:PYTHONIOENCODING="utf-8"; & ".\.venv\Scripts\python.exe" scripts\ingest.py
@@ -301,7 +304,7 @@ D+1 시차)를 모사한다 — 폴백 상태에서도 차트가 의미 있게 �
 **구간 A(2024-12) 기반 수치는 데이터 교체 후에도 전부 그대로다.** 흔들린 것은 판매
 2년 확장의 영향을 받는 총량·연간 지표뿐이다. 이 구분이 회귀 테스트를 읽는 열쇠다.
 
-실데이터(`data/raw`)가 없으면 해당 테스트는 skip 된다. 현재 76개 전부 통과.
+실데이터(`data/raw`)가 없으면 해당 테스트는 skip 된다. 현재 93개 전부 통과.
 
 ## 환경 주의사항
 
@@ -312,8 +315,12 @@ D+1 시차)를 모사한다 — 폴백 상태에서도 차트가 의미 있게 �
   README 의 기술 스택에는 Folium/Streamlit-Folium 이 적혀 있는데 **구현과 불일치**다
   (folium 은 별도 설치가 필요해 Cloud 빌드 리스크를 늘려서 제외했다). README 를
   수정하거나 사용자에게 확인할 것.
-- `requirements.txt` 는 현재 `>=` 다. Cloud 빌드 성공을 확인한 뒤 `pip freeze` 로
-  `==` 핀 고정하는 순서를 의도한 것이다.
+- `requirements.txt` 는 **직접 의존 7개를 `==` 로 고정**했다 (2026-08-04, Python 3.13).
+  `pip freeze` 전체를 붙여넣지 않는다 — 개발 환경이 Windows 라 colorama·pywin32 가
+  섞여 Linux 인 Cloud 빌드를 깬다. 전이 의존은 pip 해석에 맡긴다. 버전을 올릴 때는
+  `pip install --dry-run --ignore-installed -r requirements.txt` 로 해석이 되는지
+  본 뒤 pytest 전량 통과를 확인하고 파일 주석의 날짜를 갱신한다.
+  pytest 는 `requirements-dev.txt` 에 있다 (배포 이미지에 테스트 의존성을 넣지 않는다).
 - 로그인·초기 설정 관문을 두지 않는다 (`st.login`/비밀번호 위젯 미사용, 모든 사이드바
   위젯에 유효한 기본값). 접속 즉시 전체 대시보드가 조작 가능해야 한다 — 심사 요구사항.
 - `app.py` 는 탭 단위로 예외를 격리한다. 한 탭이 실패해도 나머지는 동작해야 한다.

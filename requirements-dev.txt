@@ -1,0 +1,11 @@
+# 개발·테스트 전용. Streamlit Cloud 는 이 파일을 읽지 않는다.
+#
+#   & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-dev.txt
+#   & ".\.venv\Scripts\python.exe" -m pytest tests\ -q
+#
+# pytest 를 requirements.txt 에 넣지 않는 이유: 배포 이미지에 테스트 의존성을
+# 실으면 빌드가 느려지고 깨질 지점만 늘어난다. 반대로 여기에 적어 두지 않으면
+# 새로 클론한 사람이 회귀 테스트 93개를 돌릴 수 없다.
+
+-r requirements.txt
+pytest==9.1.1
