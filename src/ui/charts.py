@@ -262,7 +262,7 @@ def age_gender_bars(demo: pd.DataFrame) -> go.Figure:
         orientation="h", text="visitors",
         color_discrete_map=theme.GENDER_COLOR,       # 엔티티 고정
         category_orders={"age_band": order, "gender": ["남", "여"]},
-        labels={"visitors": "방문고객수", "age_band": "연령대", "gender": "성별"},
+        labels={"visitors": "고객수", "age_band": "연령대", "gender": "성별"},
     )
     fig.update_traces(
         texttemplate="%{text:,}", textposition="outside",

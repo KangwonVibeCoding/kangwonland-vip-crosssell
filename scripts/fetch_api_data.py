@@ -42,6 +42,7 @@ TARGETS: dict[str, dict] = {
         "label": "고객성별연령분석현황",
         "normalize": schema.normalize_demographics,
         "required": S.DEMO_REQUIRED,
+        "params": S.DEMO_PARAMS,          # dateFrom/dateTo 필수
     },
     "merchants": {
         "endpoint": S.EP_MERCHANTS,
@@ -58,11 +59,15 @@ MAX_PAGES = 50          # 1000행 × 50 = 5만행. 두 데이터셋 모두 이�
 # 없는 문제에 시간을 쓰게 된다.
 ERROR_HINTS: dict[str, tuple[str, ...]] = {
     "04": (
-        "→ HTTP_ERROR(04) 는 **제공기관 원본 서버**가 응답하지 않는다는 뜻입니다.",
-        "  포털 게이트웨이 인증은 통과한 상태이므로 키·파라미터 문제가 아닙니다",
-        "  (확인법: 같은 키로 다른 엔드포인트를 호출하면 200 이 옵니다. 반대로",
-        "   잘못된 키를 넣으면 403 SERVICE_KEY_IS_NOT_REGISTERED 가 옵니다).",
-        "  고칠 수 있는 것이 없습니다 — 시간을 두고 다시 실행하세요.",
+        "→ HTTP_ERROR(04) 는 두 가지를 구분하지 않습니다. **필수 파라미터 누락**을",
+        "  먼저 의심하세요 — 제공기관 서버 다운으로 보이지만 아닌 경우가 많습니다.",
+        "  성별연령 엔드포인트가 그랬습니다: dateFrom/dateTo 를 빼면 04, 넣으면 200.",
+        "  (2026-08-04 에 이를 서버 장애로 오진하고 나흘을 보냈습니다.)",
+        "  1) 포털 상세기능 문서의 **요청변수 중 필수 항목**을 전부 보내는지 확인",
+        "     → 맞다면 config/settings.py 의 해당 EP 파라미터 상수에 추가하세요.",
+        "  2) 그래도 04 라면 그때가 진짜 제공기관 서버 문제입니다 — 시간을 두고",
+        "     다시 실행하세요. 게이트웨이 인증은 통과한 상태이므로 키 문제는 아닙니다",
+        "     (잘못된 키는 403 SERVICE_KEY_IS_NOT_REGISTERED 로 옵니다).",
     ),
     "20": (
         "→ SERVICE_ACCESS_DENIED(20): 포털에서 해당 API 활용신청이 승인되지",
@@ -97,7 +102,8 @@ def fetch_one(name: str, spec: dict, out) -> bool:
     if prior:
         out(f"   기존 수집물: {prior.name} (호출 실패 시 유지됩니다)")
 
-    rows = api_client.fetch_paged(endpoint, max_pages=MAX_PAGES)
+    rows = api_client.fetch_paged(endpoint, max_pages=MAX_PAGES,
+                                  extra=spec.get("params"))
     if not rows:
         errors = api_client.get_errors()[-3:]
         for msg in errors:

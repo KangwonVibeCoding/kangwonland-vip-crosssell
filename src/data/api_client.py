@@ -179,14 +179,21 @@ def fetch_json(endpoint: str, params: dict | None = None) -> list[dict] | None:
 
 
 def fetch_paged(endpoint: str, max_pages: int = 5,
-                page_size: int | None = None) -> list[dict] | None:
+                page_size: int | None = None,
+                extra: dict | None = None) -> list[dict] | None:
     """페이지네이션 순회. 첫 페이지가 실패하면 즉시 폴백으로 넘긴다.
 
     마지막 페이지 판정은 **직전 페이지의 행 수**로 한다. 예전 구현은 첫 페이지
     길이만 보고 있어서, 2페이지가 짧아도 남은 페이지를 계속 두드렸다.
+
+    `extra` 는 엔드포인트가 요구하는 추가 파라미터다 (성별연령의 dateFrom/dateTo
+    처럼 **필수인데 페이지와 무관한** 것들). 빠뜨리면 포털이 HTTP_ERROR(04) 를
+    돌려주는데, 그 코드는 제공기관 서버 다운과 구분되지 않는다 — 실제로 그렇게
+    오진한 적이 있다(S.DEMO_PARAMS 주석 참고).
     """
     size = page_size or S.API_PAGE_SIZE
-    first = fetch_json(endpoint, page_params(endpoint, 1, size))
+    base = dict(extra or {})
+    first = fetch_json(endpoint, {**base, **page_params(endpoint, 1, size)})
     if not first:
         return None
     rows = list(first)
@@ -194,7 +201,7 @@ def fetch_paged(endpoint: str, max_pages: int = 5,
     for page in range(2, max_pages + 1):
         if len(prev) < size:
             break
-        nxt = fetch_json(endpoint, page_params(endpoint, page, size))
+        nxt = fetch_json(endpoint, {**base, **page_params(endpoint, page, size)})
         if not nxt:
             break
         rows.extend(nxt)
