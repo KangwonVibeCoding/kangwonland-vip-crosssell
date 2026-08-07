@@ -15,7 +15,7 @@
   --kl-page: #f9f9f7;
   --kl-ink: #0b0b0b;
   --kl-ink-2: #52514e;
-  --kl-muted: #898781;
+  --kl-muted: #73716c;
   --kl-grid: #e1e0d9;
   --kl-axis: #c3c2b7;
   --kl-border: rgba(11, 11, 11, 0.10);
@@ -26,6 +26,62 @@
   --kl-up: #006300;
   --kl-down: #d03b3b;
   --kl-radius: 12px;
+
+  /* ── 틴트 배경 위 텍스트색 ──────────────────────────────────────
+   * 배지·칩은 계열색을 12~14% 틴트한 배경 위에 **같은 계열색 글자**를 얹는다.
+   * 그 조합은 채도만 맞고 명암비가 안 나온다 — 실측 badge-est 1.90:1,
+   * badge-bridge 2.44:1 로 사실상 안 읽혔다. 글자는 0.72rem(≈11.5px)이라
+   * WCAG '큰 글자' 예외(3:1)에 해당하지 않고 4.5:1 이 필요하다.
+   *
+   * 그래서 **배경 틴트는 그대로 두고 글자만** 같은 색상(H)·채도(S)에서
+   * 명도(L)를 낮춘 값으로 분리했다. 색상환 위치가 유지되므로 배지가 어느
+   * 구간을 뜻하는지 알아보는 방식은 바뀌지 않는다.
+   *
+   * ⚠ 차트 계열색(theme.SERIES)에는 쓰지 않는다. 그쪽은 색약 안전성(ΔE)
+   * 검증을 통과한 값이라 명도를 건드리면 검증이 무효가 된다. 이 변수는
+   * **UI 크롬 텍스트 전용**이다. 값은 scripts/check_contrast.py 로 재현된다.
+   */
+  --kl-on-blue: #2469bc;    /* 4.60:1 on 12% blue tint */
+  --kl-on-aqua: #137a55;    /* 4.61:1 on 12% aqua tint */
+  --kl-on-orange: #bb4212;  /* 4.61:1 on 12% orange tint */
+  --kl-on-yellow: #926300;  /* 4.60:1 on 14% yellow tint */
+  --kl-on-blue-soft: #256bbf; /* 4.61:1 on 10% blue tint (칩) */
+
+  /* ── 브랜드 크롬: 딥 네이비 + 샴페인 골드 ──────────────────────
+   * "VIP 대상 프리미엄 B2B 솔루션"이라는 주제를 화면에 드러내기 위한 층이다.
+   * **구조 크롬(헤더·hero)에만** 쓴다 — 차트 계열색은 `SERIES` 뿐이고 그것은
+   * 색약 검증을 통과한 값이다. 브랜드색을 데이터색으로 끌어들이면 그 검증이
+   * 무효가 되고, 독자가 "이 색이 브랜드인가 데이터인가"를 매번 판단해야 한다.
+   * src/ui/theme.py 의 NAVY / GOLD / ON_NAVY 와 같은 값을 유지한다. */
+  --kl-navy-900: #0d1a2b;
+  --kl-navy-800: #142639;
+  --kl-navy-700: #1c3450;
+  --kl-navy-600: #27466a;
+
+  --kl-gold: #cba95c;         /* 네이비 위 액센트 7.8:1 */
+  --kl-gold-bright: #dcbc70;  /* 네이비 위 강조 수치 9.6:1 */
+  --kl-gold-deep: #7a5f14;    /* 밝은 지면 위 골드 텍스트 5.7:1 */
+
+  --kl-on-navy: #f4f6f9;
+  --kl-on-navy-2: #b9c4d4;
+  --kl-on-navy-3: #93a1b6;
+}
+
+/* ── 한글 줄바꿈 ─────────────────────────────────────────────────
+ * 브라우저 기본값(`word-break: normal`)은 한글을 **어절이 아니라 글자 단위로**
+ * 끊는다. 그래서 좁은 폭에서 "지역특산품" 이 "지역특산 / 품" 으로 갈라진다
+ * (실측: 1180px 헤더 카드). `keep-all` 은 어절 경계에서만 끊게 한다.
+ *
+ * 다만 `keep-all` 만 두면 끊을 곳이 없는 긴 토큰(상품명·URL·긴 영문)이 컨테이너를
+ * 밀어내 가로 스크롤을 만든다. `overflow-wrap: anywhere` 를 같이 줘서 "어절
+ * 단위로 끊되, 정 안 되면 아무 데서나 끊는다"로 만든다.
+ *
+ * 커스텀 컴포넌트에만 건다 — Streamlit 기본 위젯까지 덮으면 예상 못한 곳이
+ * 같이 바뀐다. */
+[class^="kl-"],
+[class*=" kl-"] {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 /* ── 헤더 ───────────────────────────────────────────────────────── */
@@ -60,13 +116,13 @@
   white-space: nowrap;
 }
 
-.badge-real    { background: rgba(42, 120, 214, 0.12); color: var(--kl-blue);
+.badge-real    { background: rgba(42, 120, 214, 0.12); color: var(--kl-on-blue);
                  border-color: rgba(42, 120, 214, 0.30); }
-.badge-bridge  { background: rgba(27, 175, 122, 0.12); color: var(--kl-aqua);
+.badge-bridge  { background: rgba(27, 175, 122, 0.12); color: var(--kl-on-aqua);
                  border-color: rgba(27, 175, 122, 0.30); }
-.badge-latest  { background: rgba(235, 104, 52, 0.12); color: var(--kl-orange);
+.badge-latest  { background: rgba(235, 104, 52, 0.12); color: var(--kl-on-orange);
                  border-color: rgba(235, 104, 52, 0.30); }
-.badge-est     { background: rgba(237, 161, 0, 0.14); color: var(--kl-yellow);
+.badge-est     { background: rgba(237, 161, 0, 0.14); color: var(--kl-on-yellow);
                  border-color: rgba(237, 161, 0, 0.32); }
 .badge-neutral { background: var(--kl-grid); color: var(--kl-ink-2);
                  border-color: var(--kl-border); }
@@ -281,7 +337,7 @@
   border-radius: 6px;
   background: rgba(42, 120, 214, 0.10);
   border: 1px solid rgba(42, 120, 214, 0.24);
-  color: var(--kl-blue);
+  color: var(--kl-on-blue-soft);
   font-size: 0.7rem;
   font-weight: 600;
   white-space: nowrap;
@@ -348,7 +404,7 @@
 
 .src-mock {
   background: rgba(237, 161, 0, 0.14);
-  color: var(--kl-yellow);
+  color: var(--kl-on-yellow);
   border: 1px solid rgba(237, 161, 0, 0.32);
 }
 
@@ -390,3 +446,43 @@
 [data-testid="stDataFrame"] { overflow-x: auto; }
 
 hr { border-color: var(--kl-grid); }
+
+/* ── 키보드 포커스 ──────────────────────────────────────────────────
+ * 이 대시보드는 사이드바 위젯이 12개고 탭이 4개다. 마우스 없이 조작하는
+ * 사람에게 "지금 어디에 있는지"가 안 보이면 조작이 불가능해진다.
+ * Streamlit 기본 포커스 표시는 컴포넌트마다 제각각(어떤 것은 아예 없다)이라
+ * 여기서 한 겹 덮는다.
+ *
+ * `:focus-visible` 을 쓰는 이유: `:focus` 로 걸면 마우스 클릭에도 링이 남아
+ * 지저분해지고, 그러면 다음 사람이 링 자체를 지우게 된다. 키보드 조작일 때만
+ * 나오는 편이 오래 살아남는다.
+ *
+ * outline 은 border 가 아니라 outline 으로 준다 — border 를 쓰면 요소 크기가
+ * 바뀌어 포커스 이동마다 레이아웃이 1px 씩 튄다. border-radius 도 건드리지
+ * 않는다: outline 은 요소의 기존 radius 를 따라 그려지므로, 여기서 radius 를
+ * 지정하면 포커스가 갈 때마다 위젯 모양이 바뀐다.
+ *
+ * 탭은 button 이 아니라 `tabindex` 를 가진 div 라서 `[tabindex]` 로 잡힌다.
+ * `[role="tab"]` 도 같이 적어 의도를 남긴다. */
+:where(a, button, input, select, textarea, summary,
+       [tabindex], [role="tab"]):focus-visible {
+  outline: 2px solid var(--kl-blue);
+  outline-offset: 2px;
+}
+
+/* ── 동작 축소 선호 ─────────────────────────────────────────────────
+ * 전정기관 장애가 있는 사용자에게 예고 없는 움직임은 증상을 유발한다.
+ * 탭 전환·expander 펼침 같은 Streamlit 기본 트랜지션과 plotly 의 hover
+ * 트랜지션이 대상이다. 값을 0 이 아니라 0.01ms 로 두는 것은 관용구다 —
+ * 0 으로 두면 transitionend 이벤트가 발생하지 않아 그 이벤트를 기다리는
+ * 스크립트가 멈춘다. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
