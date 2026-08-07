@@ -22,10 +22,13 @@ def render(ctx: dict) -> None:
     sales = fs.slice_sales(ctx["data"]["sales"])
 
     if sales.empty:
+        # 구간명은 settings 에서 가져온다 — 문구에 박아두면 구간 정의가 바뀔 때 어긋난다
+        pc = S.PERIODS[S.PERIOD_C]
         C.empty_state(
             "선택한 구간·필터에 판매 데이터가 없습니다.",
-            "'최신 유입(2026-05)' 구간에는 판매 데이터가 존재하지 않습니다. "
-            "'정밀 검증' 또는 '연간 확장' 구간을 선택해 주세요.",
+            f"'{pc['badge']} · {pc['start']:%Y-%m}~{pc['end']:%m}' 구간에는 판매 "
+            "데이터가 존재하지 않습니다. '정밀 검증' 또는 '연간 확장' 구간을 "
+            "선택해 주세요.",
         )
         return
 
