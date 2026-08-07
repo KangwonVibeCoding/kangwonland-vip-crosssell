@@ -22,6 +22,13 @@ BAR_RADIUS = 4          # 데이터 엔드 라운딩
 LINE_WIDTH = 2
 MARKER_SIZE = 8
 
+# 2열로 나란히 서는 차트의 공통 높이.
+# 아래끝이 안 맞으면 한쪽만 삐져나와 두 칸이 짝으로 안 읽힌다. 다만 **낮은 쪽에
+# 맞추면 안 된다** — 특산품 20종을 지도의 430px 에 넣으면 막대 하나가 17px 로
+# 눌린다. 항목이 가장 많은 쪽(특산품 20종 = 26×20+90 ≈ 610)에 가깝게 잡아
+# 양쪽 다 숨통을 준다.
+PAIR_HEIGHT = 560
+
 
 def _hover(*rows: str) -> str:
     return "<br>".join(rows) + "<extra></extra>"
@@ -320,8 +327,14 @@ def dow_month_heatmap(pivot: pd.DataFrame, *, subtitle: str = "") -> go.Figure:
 
 def top_items_bar(items: pd.DataFrame, *, value_col: str = "total_qty",
                   value_label: str = "총 판매수량",
-                  color_by_tier: bool = True) -> go.Figure:
-    """상위 상품 수평 바. 티어 3색 또는 단일색 + 값 직접 라벨."""
+                  color_by_tier: bool = True,
+                  height: int | None = None) -> go.Figure:
+    """상위 상품 수평 바. 티어 3색 또는 단일색 + 값 직접 라벨.
+
+    `height` 를 주면 자동 높이(항목 수 비례) 대신 그 값을 쓴다. 이 차트가 지도처럼
+    **높이가 고정된 요소와 2열로 나란히 설 때** 아래끝을 맞추기 위한 것이다 —
+    맞추지 않으면 한쪽만 길게 삐져나와 두 칸이 짝으로 안 읽힌다.
+    """
     df = items.iloc[::-1]        # 수평 바는 아래에서 위로 그려진다
     if color_by_tier and "tier_label" in df.columns:
         fig = px.bar(
@@ -350,7 +363,7 @@ def top_items_bar(items: pd.DataFrame, *, value_col: str = "total_qty",
     # 바깥 영역이라 이 잘림을 막지 못한다 — 축 자체에 여유를 줘야 한다.
     vmax = float(pd.to_numeric(df[value_col], errors="coerce").max() or 0)
     fig.update_layout(
-        height=max(26 * len(df) + 90, 220), hovermode="closest",
+        height=height or max(26 * len(df) + 90, 220), hovermode="closest",
         margin=dict(l=8, r=76, t=36, b=8), bargap=0.25,
         xaxis=dict(range=[0, vmax * 1.18]) if vmax > 0 else {},
     )

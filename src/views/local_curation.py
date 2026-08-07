@@ -76,9 +76,16 @@ def render(ctx: dict) -> None:
             C.empty_state("특산품 판매 데이터가 없습니다.",
                           "사이드바에서 '지역특산품' 채널을 선택해 주세요.")
         else:
+            # 왼쪽 막대와 오른쪽 지도의 아래끝을 맞춘다 — 안 맞추면 한쪽만
+            # 삐져나와 두 칸이 짝으로 안 읽힌다.
+            # ⚠ 높이는 **낮은 쪽에 맞추지 않는다.** 특산품 20종을 지도의 430px
+            #   에 욱여넣으면 막대 하나가 17px 로 눌린다. 정렬하자고 한쪽을
+            #   찌그러뜨리는 건 손해다 — 둘 다 charts.PAIR_HEIGHT 로 올리면
+            #   막대도 지도도 숨통이 트인다.
             st.plotly_chart(
                 charts.top_items_bar(local_top, value_col="total_qty",
-                                     value_label="총 판매수량"),
+                                     value_label="총 판매수량",
+                                     height=charts.PAIR_HEIGHT),
                 width="stretch", key="lc_top",
             )
             C.table_view(
@@ -99,7 +106,7 @@ def render(ctx: dict) -> None:
             )
         else:
             st.pydeck_chart(maps.merchant_deck(deck_df, fs.radius_km),
-                            width="stretch", height=430)
+                            width="stretch", height=charts.PAIR_HEIGHT)
             legend = " · ".join(str(g) for g in deck_df["group"].unique())
             st.caption(f"업종 그룹: {legend} · 마커 크기 = 교차판매 적합도")
             C.table_view(

@@ -19,11 +19,19 @@ from src.ui import components as C
 
 
 def _render_confound(table: pd.DataFrame) -> None:
-    """요일 교란 통제 절 — 가설 검증 배너 **바로 아래**에 둔다.
+    """요일 교란 통제 절 — 반박을 각주로 밀지 않는다.
 
-    위치가 곧 주장이다. r=0.80 을 띄운 화면에서 이 절이 아래쪽에 밀리면 "0.80 을
-    먼저 팔고 반박은 각주로" 가 된다. 배너 직후에 놓아 근거와 그 한계를 한 호흡에
-    읽게 한다.
+    **원칙은 그대로다**: r=0.80 을 팔고 그 한계를 저 아래 각주로 두면 안 된다.
+    다만 지금은 그 반박이 **hero 헤드라인 자체**에 들어가 있다
+    ("r=0.80 · 요일을 통제하면 0.56", 칩에도 0.801 → 0.370). 반박은 이미 첫 줄에서
+    끝난다. 그래서 이 절은 '반박'이 아니라 **그 반박의 근거**를 펼치는 자리다.
+
+    그 사이에 KPI 한 줄(카드 5장, 약 130px)이 들어가도 이 절은 여전히 첫 1.5 화면
+    안이다 — 각주로 밀린 것이 아니다. 대신 읽는 순서가 자연스러워진다:
+    주장(hero) → 규모(KPI) → 근거(여기) → 상세(차트들).
+
+    배치도 바꿨다. 덤벨 차트와 그 해석(insight)을 **세로로 쌓지 않고 나란히** 둔다.
+    "0.801 → 0.370" 을 보면서 "54%가 주말 효과였다"를 같이 읽어야 뜻이 붙는다.
     """
     if table.empty:
         return
@@ -39,24 +47,6 @@ def _render_confound(table: pd.DataFrame) -> None:
         badge_detail=(f"{n_days}일 · {metric_label} 기준 · "
                       f"부트스트랩·순열 각 {S.CONFOUND_RESAMPLES:,}회"),
     )
-    st.plotly_chart(charts.confound_dumbbell(table), width="stretch",
-                    key="ov_confound")
-    C.table_view(
-        table.assign(
-            채널=table["channel_label"],
-            원상관=table["raw"].round(3),
-            통제후=table["partial"].round(3),
-            감소=table["delta"].round(3),
-            CI=[f"[{lo:.3f}, {hi:.3f}]" for lo, hi in zip(table["ci_lo"], table["ci_hi"])],
-            p값=table["p"].round(4),
-            판정=table["verdict"],
-            표본일수=table["n_days"],
-        )[["채널", "원상관", "통제후", "감소", "CI", "p값", "판정", "표본일수"]].rename(
-            columns={"원상관": "원 상관", "통제후": "요일 통제 후",
-                     "CI": "95% CI(부트스트랩)", "p값": "p(순열검정)"}),
-        label="편상관 표로 보기",
-    )
-
     lines: list[str] = []
     raw_top = table.loc[table["raw"].idxmax()]
     if raw_top["raw"]:
@@ -80,7 +70,31 @@ def _render_confound(table: pd.DataFrame) -> None:
             f"{' · '.join(weak)}{C.josa(weak[-1])} 통제 후 95% CI 가 0을 포함해 "
             "유의하지 않다 — 유입 자체보다 요일·계절 신호(탭3)로 공략할 채널이다."
         )
-    C.insight_box(lines, title="요일을 빼고 남은 것")
+    # 차트와 그 해석을 나란히 — 세로로 쌓으면 "0.801 → 0.370" 을 본 뒤 스크롤해서
+    # "54%가 주말 효과였다"를 읽게 된다. 그 사이에 눈이 한 번 끊긴다.
+    chart_col, read_col = st.columns([0.62, 0.38], vertical_alignment="top")
+    with chart_col:
+        st.plotly_chart(charts.confound_dumbbell(table), width="stretch",
+                        key="ov_confound")
+    with read_col:
+        C.insight_box(lines, title="요일을 빼고 남은 것")
+
+    # 표와 방법론은 근거의 '뒷장'이다 — 접어 두되 없애지는 않는다
+    C.table_view(
+        table.assign(
+            채널=table["channel_label"],
+            원상관=table["raw"].round(3),
+            통제후=table["partial"].round(3),
+            감소=table["delta"].round(3),
+            CI=[f"[{lo:.3f}, {hi:.3f}]" for lo, hi in zip(table["ci_lo"], table["ci_hi"])],
+            p값=table["p"].round(4),
+            판정=table["verdict"],
+            표본일수=table["n_days"],
+        )[["채널", "원상관", "통제후", "감소", "CI", "p값", "판정", "표본일수"]].rename(
+            columns={"원상관": "원 상관", "통제후": "요일 통제 후",
+                     "CI": "95% CI(부트스트랩)", "p값": "p(순열검정)"}),
+        label="편상관 표로 보기",
+    )
     C.caveat(
         f"편상관은 요일 더미 6개로 양변을 회귀한 잔차끼리의 상관입니다. 표본 "
         f"{n_days}일에서 계산했고, CI 는 부트스트랩·p 는 순열검정"
@@ -175,7 +189,6 @@ def render(ctx: dict) -> None:
             headline=headline, sub=sub, stats_pairs=pairs,
             badge="실측 조인", badge_detail=badge_detail,
         )
-        _render_confound(confound)
     else:
         C.hero_banner(
             headline="이 구간은 유입·판매 데이터가 겹치지 않습니다",
@@ -249,6 +262,12 @@ def render(ctx: dict) -> None:
     with cols[4]:
         C.kpi_card("Attach rate", C.fmt_float(attach_now, 2), "", 0,
                    note="유입 1건당 리조트 소비량")
+
+    # ── 요일 교란 통제 ────────────────────────────────────────────────
+    # 읽는 순서: 주장(hero) → 규모(KPI) → **근거(여기)** → 상세(아래 차트들).
+    # 반박 자체는 이미 hero 헤드라인에 있으므로("요일을 통제하면 0.56") 이 절이
+    # KPI 뒤로 와도 각주로 밀린 것이 아니다 — 자세한 근거는 _render_confound 참조.
+    _render_confound(confound)
 
     # ── 유입 추이 ─────────────────────────────────────────────────────
     st.markdown("")
