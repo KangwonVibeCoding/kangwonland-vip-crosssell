@@ -262,8 +262,15 @@
 }
 
 /* ── 섹션 헤더 ──────────────────────────────────────────────────── */
+/* 여백이 위계다 — 위는 넓게(섹션끼리 떼고) 아래는 좁게(제목을 제 내용에 붙인다).
+ *
+ * 예전에는 위아래가 4.8px / 11.2px 로 거의 대칭이라 제목이 두 블록 사이에 떠
+ * 있었다. 어느 쪽 내용의 제목인지 여백으로는 알 수 없었고, 그래서 뷰마다
+ * `st.markdown("")` 를 손으로 넣어 간격을 벌리고 있었다 — 탭마다 리듬이 달라진
+ * 원인이다. 그 자리막이 15개를 지우고 리듬을 여기 한 곳으로 모았다.
+ * 근접성 원칙: 붙어 있는 것이 한 덩어리로 읽힌다. */
 .kl-section {
-  margin: 0.3rem 0 0.7rem;
+  margin: 2.1rem 0 0.55rem;
   padding-left: 0.7rem;
   border-left: 3px solid var(--kl-gold);
 }
@@ -299,12 +306,19 @@
   height: 100%;
 }
 
+/* 좌측 액센트는 **아무것도 인코딩하지 않는다.** 화면의 KPI 9장이 전부 같은
+ * 파랑이었는데, 그건 정보를 담은 척하는 장식이라 이 프로젝트에서 가장 어울리지
+ * 않는 종류의 요소였다. 골드로 바꾸면 두 가지가 정리된다 —
+ *   1. 크롬은 골드, 데이터는 SERIES 라는 색 언어가 예외 없이 지켜진다
+ *      (파랑이 크롬에서 빠지면 SERIES 파랑은 '데이터색'으로만 남는다)
+ *   2. 골드는 지면 대비가 낮아 조용하다. 뜻이 없는 표시는 조용한 편이 옳다.
+ * 3px 인 것도 같은 이유다 — 면이 아니라 선으로. */
 .kl-kpi::before {
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
-  width: 4px;
-  background: var(--accent, var(--kl-blue));
+  width: 3px;
+  background: var(--accent, var(--kl-gold));
 }
 
 /* 행에 속하지 않은 단독 카드 — 컬럼 높이를 채우지 않고 내용만큼만 차지한다.
@@ -726,6 +740,39 @@
 [data-testid="stDataFrame"] { overflow-x: auto; }
 
 hr { border-color: var(--kl-grid); }
+
+/* ── 내보내기 버튼 ──────────────────────────────────────────────────
+ * 이 대시보드에서 **화면 밖으로 무언가를 꺼내는 유일한 요소**다. 나머지는 전부
+ * 읽거나 거르는 도구고, 이것만 결과물을 만든다. 그런데 Streamlit 기본값은
+ * 흰 배경 + 회색 테두리라 사이드바 위젯과 구별이 안 됐다 — 표 밑에 붙은 부속처럼
+ * 보였다. 최종 산출물로 가는 문이 가장 눈에 안 띄는 요소인 건 앞뒤가 안 맞는다.
+ *
+ * 여기가 "골드는 면이 아니라 선으로"가 쓰일 자리다. 면을 칠하면 영업 자료가
+ * 되지만, 테두리 1px 과 글자색만 골드면 조용히 눈에 띈다.
+ *
+ * ⚠ 글자는 `--kl-gold`(#cba95c)가 아니라 `--kl-gold-deep` 이다. 밝은 지면 위의
+ *   기본 골드는 1.9:1 로 AA 에 한참 못 미친다 — gold-deep 이 존재하는 이유가
+ *   정확히 이것이고, `contrast.py` 가 두 조합(기본/hover 틴트)을 회귀로 잡는다.
+ *
+ * 선택자는 `[data-testid="stDownloadButton"]` 이다. 1.60 에서 3개 매치를 실측했다
+ * (`.st-emotion-cache-*` 는 빌드마다 바뀌므로 쓰지 않는다). */
+[data-testid="stDownloadButton"] button {
+  background: var(--kl-surface);
+  border: 1px solid var(--kl-gold);
+  color: var(--kl-gold-deep);
+  font-weight: 600;
+}
+
+[data-testid="stDownloadButton"] button:hover {
+  background: rgba(203, 169, 92, 0.1);   /* --kl-gold 10% */
+  border-color: var(--kl-gold-deep);
+  color: var(--kl-gold-deep);
+}
+
+[data-testid="stDownloadButton"] button:active {
+  background: rgba(203, 169, 92, 0.18);
+  color: var(--kl-gold-deep);
+}
 
 /* ── 키보드 포커스 ──────────────────────────────────────────────────
  * 이 대시보드는 사이드바 위젯이 12개고 탭이 4개다. 마우스 없이 조작하는

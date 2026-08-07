@@ -176,6 +176,15 @@ def ui_chrome_pairs() -> list[Pair]:
         Pair("멀티셀렉트 태그 삭제 아이콘", theme.ON_NAVY["secondary"],
              theme.NAVY["700"], "#ffffff", 0.09),
         Pair("사이드바 라벨 (on navy-900)", theme.ON_NAVY["primary"], NAVY_900),
+
+        # ── 내보내기 버튼 ───────────────────────────────────────────
+        # 이 대시보드에서 유일한 액션이라 골드 테두리 + 골드 글자로 세웠다.
+        # 기본 골드(#cba95c)를 글자에 쓰면 밝은 지면에서 1.9:1 이라 못 읽는다 —
+        # gold-deep 이 그 자리를 대신한다. hover 는 골드 10% 틴트가 깔리므로
+        # 배경이 살짝 어두워진 상태도 같이 검사한다(둘 중 불리한 쪽이 기준).
+        Pair("내보내기 버튼 라벨", theme.GOLD["deep"], SURFACE),
+        Pair("내보내기 버튼 라벨 (hover)", theme.GOLD["deep"], SURFACE,
+             theme.GOLD["base"], 0.10),
     ]
 
 
