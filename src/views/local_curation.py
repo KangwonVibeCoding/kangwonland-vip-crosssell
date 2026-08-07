@@ -57,7 +57,6 @@ def render(ctx: dict) -> None:
         return
 
     # ── 특산품 Top + 지도 ─────────────────────────────────────────────
-    st.markdown("")
     C.section_header(
         "특산품 상위 상품과 포인트 가맹점 분포",
         "특산품점은 상시 영업장이 1곳이라 영업장 대신 상품 티어로 구분한다. "
@@ -156,7 +155,6 @@ def render(ctx: dict) -> None:
         daily = stats.daily_qty(full_local)
         months_present = pd.to_datetime(pd.Series(daily.index)).dt.month.nunique()
         if months_present >= 4:
-            st.markdown("")
             C.section_header(
                 "명절 선물 시즌 분석",
                 "특산품은 추석 전후(9~10월)에 수요가 몰린다. 연간 데이터 전체 기준.",
@@ -183,7 +181,6 @@ def render(ctx: dict) -> None:
                 )
 
     # ── VIP 로컬 패키지 ───────────────────────────────────────────────
-    st.markdown("")
     C.section_header(
         "VIP 로컬 패키지 제안",
         "적합도 상위 가맹점 × CSM 상위 특산품 조합. 특산품은 유입 익일(D+1)에 "
@@ -214,6 +211,27 @@ def render(ctx: dict) -> None:
                         + f" · 카지노에서 {pkg['dist_km']:.1f}km"
                     ),
                 )
+        # 카드는 읽기용이라 옮겨 적어야 한다. 제휴 담당자에게 넘길 수 있는 형태로
+        # 같은 내용을 표로 준다 — '업종 미상' 여부까지 열로 남겨야 받는 쪽이
+        # 적합도 점수를 그대로 믿지 않는다.
+        C.download_csv(
+            pd.DataFrame([{
+                "패키지": pkg["rank"],
+                "특산품": pkg["item"],
+                "티어": pkg["tier"],
+                "가맹점": pkg["merchant"],
+                "업종": pkg["category"] or "업종 미상",
+                "업종확인": "확인" if pkg["fit_known"] else "미상(중립값 적용)",
+                "상품 CSM": round(float(pkg["item_csm"]), 1),
+                "교차판매 적합도": round(float(pkg["fit_score"]), 1),
+                "거리(km)": round(float(pkg["dist_km"]), 1),
+            } for pkg in packages]),
+            f"⬇ VIP 로컬 패키지 {len(packages)}건 CSV 내려받기",
+            f"local_packages_{fs.start:%Y%m%d}_{fs.end:%Y%m%d}.csv",
+            key="lc_dl_packages",
+            help_text="제휴 담당자에게 그대로 전달할 수 있는 형태입니다 "
+                      "(Excel 한글 호환).",
+        )
 
     C.caveat(
         f"교차판매 적합도 = 카지노 기준점{S.CASINO_LATLON}으로부터의 근접도"

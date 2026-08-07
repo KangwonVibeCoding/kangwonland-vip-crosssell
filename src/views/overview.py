@@ -13,9 +13,11 @@ import streamlit as st
 
 from config import settings as S
 from src.analysis import inflow as inflow_mod
+from src.analysis import lag as lag_mod
 from src.analysis import stats, vip
 from src.ui import charts
 from src.ui import components as C
+from src.ui import maps
 
 
 def _render_confound(table: pd.DataFrame) -> None:
@@ -35,7 +37,6 @@ def _render_confound(table: pd.DataFrame) -> None:
     """
     if table.empty:
         return
-    st.markdown("")
     n_days = int(table["n_days"].max())
     metric_label = str(table["metric_label"].iloc[0])
     C.section_header(
@@ -101,6 +102,165 @@ def _render_confound(table: pd.DataFrame) -> None:
         f"(각 {S.CONFOUND_RESAMPLES:,}회, seed {S.CONFOUND_SEED} 고정)입니다. "
         "scripts/diagnose_confound.py 로 같은 수치를 재현할 수 있습니다."
     )
+
+
+def calendar_export(display: pd.DataFrame) -> pd.DataFrame:
+    """집행 캘린더 CSV 사본 — **화면과 같은 열 이름**으로 맞춘다.
+
+    화면 표의 열 이름은 `st.dataframe(column_config=...)` 가 붙인 것이라
+    프레임에는 압축형('유입밖', '미달기회')만 들어 있고, 체크박스 열은 CSV 로
+    떨어질 때 TRUE/FALSE 가 된다. 버튼에 "화면에 보이는 그대로"라고 써 놓고
+    다른 파일을 주면 그 문구 자체가 거짓이 된다 — 이 프로젝트에서 가장 하면
+    안 되는 종류의 어긋남이라 뷰 밖으로 꺼내 테스트로 고정한다.
+    """
+    out = display.rename(columns={
+        "유입지수": "유입 지수", "유입순위": "유입 순위", "VIP소비": "VIP 소비",
+        "미달기회": "미달 기회", "유입밖": "유입만 봤다면 놓침",
+    })
+    return out.assign(**{
+        "VIP 소비": out["VIP 소비"].fillna(0).round().astype("int64"),
+        "유입만 봤다면 놓침": out["유입만 봤다면 놓침"].map({True: "예", False: ""}),
+    })
+
+
+def _render_reach(calendar: pd.DataFrame, vts: pd.DataFrame, ars: pd.DataFrame,
+                  vrb: pd.DataFrame, sales: pd.DataFrame) -> None:
+    """집행 규모 — "그래서 얼마나?"에 답하는 유일한 자리.
+
+    이 대시보드의 실행 관련 숫자는 전부 0~100 지수였다(CSM 84.2, VTS 91.3,
+    적합도 78). 지수는 순위를 말하지 규모를 말하지 않아서, "이걸 하면 뭐가
+    좋아지는가"에 답할 문장이 화면에 하나도 없었다.
+
+    ⚠ **금액은 넣지 않는다.** 단가 컬럼이 원본에 없다. 없는 단가를 가정해 매출
+    추정을 만들면 그 한 줄이 이 프로젝트가 세운 근거 서사를 스스로 무너뜨린다.
+    여기 있는 네 값은 전부 **이미 계산된 값의 합계·비율**이라 새 가정이 0개다.
+
+    핵심은 세 번째 줄의 집중도다 — "전체 일수의 32%에 유입의 41%가 몰린다"가
+    선택과 집중이라는 주장의 규모적 근거다. 비중이 일수 비중과 같으면 그 날을
+    고를 이유가 없다는 뜻이기도 하다.
+    """
+    if calendar.empty:
+        return
+    picked = set(calendar["date"])
+    n_days, total_days = len(calendar), len(vts)
+    day_share = n_days / total_days if total_days else None
+
+    def _sum(frame: pd.DataFrame, col: str, only_picked: bool = True) -> float | None:
+        if frame.empty or col not in frame.columns or "date" not in frame.columns:
+            return None
+        sub = frame.loc[frame["date"].isin(picked)] if only_picked else frame
+        value = float(sub[col].sum())
+        return value if pd.notna(value) else None
+
+    tickets_sel = _sum(ars, "tickets")
+    tickets_all = _sum(ars, "tickets", only_picked=False)
+    reach_share = (tickets_sel / tickets_all) if tickets_sel and tickets_all else None
+
+    vrb_sel = _sum(vrb, "vrb")
+    vip_sel = float(calendar["vip_qty"].fillna(0).sum())
+    vip_all = float(sales.loc[sales["tier"] != S.TIER_STANDARD, "qty"].sum()) \
+        if not sales.empty else 0.0
+    vip_share = (vip_sel / vip_all) if vip_all else None
+
+    cols = st.columns(4)
+    with cols[0]:
+        C.kpi_card("집행 대상 일수", C.fmt_int(n_days, "일"), "", 0,
+                   note=(f"전체 {total_days}일 중 {C.fmt_pct(day_share, 0)}"
+                         if day_share else "VTS 상위일"))
+    with cols[1]:
+        C.kpi_card("도달 유입", C.fmt_int(tickets_sel, "건"), "", 0,
+                   note=(f"입장권 구매 · 전체의 {C.fmt_pct(reach_share, 0)}"
+                         if reach_share else "이 구간 ARS 없음"))
+    with cols[2]:
+        # 일자별 추정 모수를 더한 값이라 같은 사람이 여러 날 세어진다.
+        # '명'이라고 쓰면 실인원으로 읽히므로 단위를 연인원으로 못 박는다.
+        C.kpi_card("VIP 도달 연인원", C.fmt_int(vrb_sel, "명"), "", 0,
+                   note="일자별 추정 모수 합 · 중복 포함")
+    with cols[3]:
+        C.kpi_card("해당일 VIP 소비", C.fmt_int(vip_sel, "개"), "", 0,
+                   note=(f"프리미엄+선물번들 · 전체의 {C.fmt_pct(vip_share, 0)}"
+                         if vip_share else "프리미엄 + 선물번들"))
+
+    if reach_share and day_share and reach_share > day_share:
+        C.insight_box(
+            [f"전체 {total_days}일의 {C.fmt_pct(day_share, 0)}인 {n_days}일에 "
+             f"유입의 {C.fmt_pct(reach_share, 0)}가 몰려 있다 — 이 날들만 집행해도 "
+             f"유입의 {C.fmt_pct(reach_share, 0)}에 도달한다는 뜻이다."],
+            title="선택과 집중의 규모",
+        )
+    C.caveat(
+        "규모는 도달 기준이며 매출이 아닙니다. 원본에 단가 컬럼이 없어 금액 환산은 "
+        "하지 않았습니다 — 없는 단가를 가정해 기대 매출을 만들면 이 대시보드가 "
+        "세운 근거가 그 한 줄에서 무너집니다. 'VIP 도달 연인원'은 일자별 추정 "
+        "모수의 단순 합이라 같은 고객이 여러 날 중복 계상됩니다(실인원 아님)."
+    )
+
+
+def _render_next_tabs(ctx: dict, infl: pd.DataFrame, sales: pd.DataFrame) -> None:
+    """다른 탭의 결론 미리보기 — 첫 화면이 전체를 대표하게 만든다.
+
+    이 프로젝트의 킬러 발견인 "특산품은 D+1 에 팔린다"는 탭3 맨 위에 있고,
+    지역 상생 패키지는 탭4 맨 아래에 있다. 탭1 만 보고 나가면 둘 다 놓친다.
+
+    ⚠ 문구를 하드코딩하지 않는다. 세 카드의 숫자는 지금 필터에서 다시 계산한
+    값이다 — 고정 문장을 두면 구간을 바꿨을 때 첫 화면이 거짓말을 한다.
+    계산이 실패하는 구간(겹치는 날 부족 등)에서는 그 카드를 조용히 비운다.
+    """
+    fs = ctx["filters"]
+    C.section_header(
+        "이어서 볼 것",
+        "이 탭은 '유입이 소비를 끄는가'까지 답한다. 언제·무엇을·어디서 팔 것인가는 "
+        "나머지 세 탭에 있다.",
+    )
+    cards: list[tuple[str, str, str, str]] = []
+
+    n_vip_items = int(sales.loc[sales["tier"] != S.TIER_STANDARD, "item"].nunique()) \
+        if not sales.empty else 0
+    if n_vip_items:
+        cards.append((
+            "🍽️ 탭 2 · 고마진 F&B 매칭",
+            f"고마진 후보 {n_vip_items:,}종의 순위",
+            "요일×월 수요 히트맵으로 '언제'를, 교차판매 매칭 스코어(CSM)로 "
+            "'무엇을'을 고른다.",
+            "Lift 는 표본 요건을 통과한 상품에만 계산하고, 미달은 '표본 부족'으로 표시",
+        ))
+
+    try:
+        matrix = lag_mod.lag_matrix(infl, sales, max_lag=fs.max_lag)
+        best = lag_mod.best_lags(matrix)
+    except Exception:  # noqa: BLE001
+        best = pd.DataFrame()
+    if not best.empty:
+        delayed = best.loc[best["best_lag"] >= 1]
+        if not delayed.empty:
+            row = delayed.sort_values("pearson", ascending=False).iloc[0]
+            head = (f"{row['channel_label']}은 D+{int(row['best_lag'])}에 팔린다")
+            detail = ("유입 당일에 프로모션을 몰아주면 지연 반응 채널을 놓친다. "
+                      "당일엔 F&B, 익일 오전엔 특산품 쿠폰.")
+        else:
+            head = "모든 채널이 유입 당일에 반응한다"
+            detail = "이 구간에서는 지연 반응 채널이 관측되지 않았다."
+        cards.append((
+            "⏱️ 탭 3 · 유입-소비 시차",
+            head, detail,
+            " · ".join(f"{r.channel_label} D+{int(r.best_lag)}({r.pearson:+.2f})"
+                       for r in best.itertuples()),
+        ))
+
+    deck = maps.build_merchants(ctx["data"]["merchants"], fs.radius_km)
+    if not deck.empty:
+        cards.append((
+            "🎁 탭 4 · 프리미엄 로컬 큐레이션",
+            f"반경 {fs.radius_km:,.0f}km 안 가맹점 {len(deck):,}곳",
+            "특산품 상위 상품 × 하이원포인트 가맹점으로 지역 상생 패키지를 만든다.",
+            "적합도 가중치는 데이터가 아니라 판단이라 표로 공개한다",
+        ))
+
+    if not cards:
+        return
+    for col, card in zip(st.columns(len(cards)), cards):
+        with col:
+            C.next_tab_card(*card)
 
 
 def render(ctx: dict) -> None:
@@ -270,7 +430,6 @@ def render(ctx: dict) -> None:
     _render_confound(confound)
 
     # ── 유입 추이 ─────────────────────────────────────────────────────
-    st.markdown("")
     has_tickets = "tickets" in infl.columns and infl["tickets"].notna().any()
     C.section_header(
         "카지노 유입 추이",
@@ -305,7 +464,6 @@ def render(ctx: dict) -> None:
             )
 
     # ── VIP 모수 ──────────────────────────────────────────────────────
-    st.markdown("")
     C.section_header(
         "VIP 가용 모수 구성",
         "왼쪽 도넛은 3조각으로 압축했다(색약 안전성 상한). 상세 연령×성별은 오른쪽 그룹 바.",
@@ -335,7 +493,6 @@ def render(ctx: dict) -> None:
         )
 
     # ── 캠페인 집행 캘린더 ────────────────────────────────────────────
-    st.markdown("")
     C.section_header(
         "VIP 타겟 지수 상위일 = 캠페인 집행 캘린더",
         "유입·실증 소비·미달 기회를 합산한 우선순위. 이미 잘 파는 날보다 "
@@ -344,6 +501,9 @@ def render(ctx: dict) -> None:
     )
     calendar = vip.campaign_calendar(vts)
     diag = vip.vts_vs_inflow(vts)
+    # 규모를 표보다 **먼저** 세운다 — 어느 날인지(표)보다 얼마나 되는지(규모)가
+    # 먼저 궁금한 자리다. 표를 다 읽고 나서야 규모를 만나면 이미 늦다.
+    _render_reach(calendar, vts, ars, vrb, sales)
     if calendar.empty:
         C.empty_state("이 구간에서는 VTS 를 계산할 수 없습니다.")
     else:
@@ -375,6 +535,17 @@ def render(ctx: dict) -> None:
                     "유입만 봤다면 놓침",
                     help=f"유입 상위 {diag['top_n']}일에는 들어오지 않는 날"),
             },
+        )
+        # 이 표가 이 대시보드의 최종 산출물이다 — 화면 밖으로 나가지 못하면
+        # 마케터가 날짜를 받아 적어야 한다. 보이는 그대로(필터 적용된 사본) 준다.
+        # ⚠ `display` 를 그대로 내보내면 열 이름·체크박스가 화면과 어긋난다
+        #   (calendar_export 참조).
+        C.download_csv(
+            calendar_export(display),
+            f"⬇ 집행 캘린더 {len(display)}일 CSV 내려받기",
+            f"campaign_calendar_{fs.start:%Y%m%d}_{fs.end:%Y%m%d}.csv",
+            key="ov_dl_calendar",
+            help_text="화면에 보이는 열·정렬 그대로 저장됩니다 (Excel 한글 호환).",
         )
 
     # VTS 가 유입 지수와 얼마나 다른지는 숨길 게 아니라 화면에 띄울 값이다.
@@ -437,3 +608,6 @@ def render(ctx: dict) -> None:
         "고마진 지표는 단가 데이터가 제공되지 않아 상품명 티어(프리미엄/선물번들)와 "
         "판매 희소도를 결합한 프록시입니다."
     )
+
+    # ── 이어서 볼 것 ──────────────────────────────────────────────────
+    _render_next_tabs(ctx, infl, sales)

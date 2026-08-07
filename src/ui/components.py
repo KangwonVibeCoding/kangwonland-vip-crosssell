@@ -89,7 +89,10 @@ def kpi_card(label: str, value: str, delta: str = "", delta_dir: int = 0,
         theme.INK["down"] if delta_dir < 0 else theme.INK["muted"]
     )
     arrow = "▲" if delta_dir > 0 else ("▼" if delta_dir < 0 else "")
-    accent = accent or theme.SERIES[0]
+    # 기본 액센트는 골드다. SERIES[0](파랑)은 **데이터색**이라 크롬에 쓰면
+    # 읽는 사람이 "이 파랑이 계열인가 장식인가"를 매번 판단해야 한다.
+    # 액센트가 실제로 무언가를 구분할 때만 호출부가 accent 를 넘긴다.
+    accent = accent or theme.GOLD["base"]
     if delta:
         delta_html = (
             f'<div class="kl-kpi-delta" style="color:{color}">'
@@ -214,6 +217,58 @@ def table_view(df: pd.DataFrame, label: str = "데이터 표로 보기",
     with st.expander(label, expanded=False):
         st.dataframe(_dedupe_columns(df), width="stretch", hide_index=hide_index,
                      column_config=column_config or {})
+
+
+def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    """CSV 바이트열. 인코딩은 **utf-8-sig** 로 고정한다.
+
+    순수 utf-8 로 내보내면 한국어 Windows 의 Excel 이 기본 CP949 로 해석해
+    컬럼명이 전부 깨진다 — 받는 사람이 마케터라면 그건 못 쓰는 파일이다.
+    BOM 3바이트가 그 문제를 없앤다. 스트림릿 런타임 없이도 검증할 수 있도록
+    위젯에서 분리해 둔다.
+    """
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+
+def download_csv(df: pd.DataFrame, label: str, filename: str, *,
+                 key: str | None = None, help_text: str = "") -> None:
+    """집행 대상 표를 파일로 꺼낸다.
+
+    화면에서만 볼 수 있는 캠페인 캘린더는 실행 도구가 아니라 발표 슬라이드다.
+    받는 사람(마케터)이 그대로 열어 일정에 옮길 수 있어야 제안이 집행이 된다.
+    화면에 보이는 한글 컬럼명 그대로(=필터가 적용된 사본) 내보낸다.
+    """
+    if df is None or df.empty:
+        return
+    st.download_button(
+        label,
+        data=to_csv_bytes(df),
+        file_name=filename,
+        mime="text/csv",
+        key=key,
+        help=help_text or None,
+    )
+
+
+def next_tab_card(tab: str, headline: str, detail: str, evidence: str = "") -> None:
+    """다른 탭의 결론을 한 장으로 미리 보여준다.
+
+    탭 4개 중 첫 화면에 있는 것은 탭1 의 결론뿐이다. 심사·발표에서 3분 만에
+    화면을 떠나는 사람은 이 프로젝트의 핵심 발견(특산품 D+1)을 못 보고 나간다.
+    Streamlit 에서 코드로 탭을 전환할 수는 없으므로 **문장으로 유도**한다.
+
+    문구는 고정값이 아니라 지금 필터에서 다시 계산한 값이다 — 여기만 하드코딩하면
+    필터를 바꿨을 때 첫 화면이 사실이 아닌 말을 하게 된다.
+    """
+    st.markdown(
+        f'<div class="kl-card">'
+        f'<div class="kl-card-chips"><span class="kl-chip">{_esc(tab)}</span></div>'
+        f'<div class="kl-card-title">{_esc(headline)}</div>'
+        f'<div class="kl-card-body">{_esc(detail)}</div>'
+        + (f'<div class="kl-card-evidence">{_esc(evidence)}</div>' if evidence else "")
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def source_badges(sources: dict[str, str]) -> None:

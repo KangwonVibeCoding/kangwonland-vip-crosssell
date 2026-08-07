@@ -83,7 +83,6 @@ def render(ctx: dict) -> None:
     )
 
     # ── 래그 상관 히트맵 ──────────────────────────────────────────────
-    st.markdown("")
     C.section_header(
         "래그 상관 히트맵",
         "유입(D) 대비 판매(D+k) 상관. 부호가 의미를 갖는 유일한 차트여서 발산 "
@@ -117,7 +116,6 @@ def render(ctx: dict) -> None:
     )
 
     # ── 요일 프로파일 + 시차별 상품 그룹 ──────────────────────────────
-    st.markdown("")
     C.section_header(
         "요일 프로파일과 시차별 공략 상품",
         "왼쪽: 유입과 각 채널의 요일 인덱스를 겹쳐 그렸다. 피크 요일이 어긋나는 "
@@ -146,21 +144,34 @@ def render(ctx: dict) -> None:
             )
         else:
             dropped = int(item_lags.attrs.get("dropped", 0))
+            exports: list[pd.DataFrame] = []
             for k in (0, 1):
                 group = lag_mod.lag_groups(item_lags, k, n=8)
                 st.markdown(f"**D+{k} 공략 상품**")
                 if group.empty:
                     st.caption(f"D+{k} 에 반응하는 상품이 없습니다.")
                     continue
+                shown = group.assign(
+                    상품=group["item"], 채널=group["channel_label"],
+                    r=group["pearson"].round(3), 총판매=group["total_qty"],
+                )[["상품", "채널", "r", "총판매"]]
                 st.dataframe(
-                    group.assign(
-                        상품=group["item"], 채널=group["channel_label"],
-                        r=group["pearson"].round(3), 총판매=group["total_qty"],
-                    )[["상품", "채널", "r", "총판매"]],
-                    width="stretch", hide_index=True,
+                    shown, width="stretch", hide_index=True,
                     column_config={
                         "총판매": st.column_config.NumberColumn("총 판매", format="%d"),
                     },
+                )
+                # 두 표를 따로 내보내면 받는 쪽이 다시 합쳐야 한다. 집행 시점(D+k)이
+                # 이 표의 존재 이유이므로 그것을 첫 열로 세워 하나로 준다.
+                exports.append(shown.assign(집행시점=f"D+{k}")[
+                    ["집행시점", "상품", "채널", "r", "총판매"]])
+            if exports:
+                C.download_csv(
+                    pd.concat(exports, ignore_index=True),
+                    "⬇ D+0 / D+1 공략 상품 CSV 내려받기",
+                    f"lag_targets_{fs.start:%Y%m%d}_{fs.end:%Y%m%d}.csv",
+                    key="tm_dl_targets",
+                    help_text="집행 시점(D+0 / D+1)이 첫 열입니다 (Excel 한글 호환).",
                 )
             if dropped:
                 C.caveat(
@@ -175,7 +186,6 @@ def render(ctx: dict) -> None:
     if not month_table.empty and month_table[
         [m for m in range(1, 13) if m in month_table.columns]
     ].notna().to_numpy().sum() > 3:
-        st.markdown("")
         C.section_header(
             "채널별 계절성",
             "성수기가 채널마다 다르다 — 월별로 집중 채널을 바꿔야 한다.",
@@ -191,7 +201,6 @@ def render(ctx: dict) -> None:
         )
 
     # ── 실행 처방 ─────────────────────────────────────────────────────
-    st.markdown("")
     C.section_header(
         "실행 처방",
         "위 수치에서 자동 생성된다 — 필터를 바꾸면 처방도 함께 바뀐다.",
