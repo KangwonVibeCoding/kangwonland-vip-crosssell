@@ -114,6 +114,16 @@ def test_fnb_pipeline(period_a):
         pivot.reindex([f"{m}월" for m in range(1, 13)])
     ).layout.height > one_row, "행이 늘어도 높이가 고정이면 셀 비율이 무너진다"
 
+    # 부제는 x축(side="top") 눈금 라벨 위에 앉는다. 높이가 행 수에 따라 4배까지
+    # 움직이므로 위치를 paper 비율(y>1)로 주면 행이 적은 창에서 부제가 라벨 위로
+    # 내려앉아 겹친다 — 실제로 두 번 밟은 결함이다. 절대 픽셀(yshift)로 고정하고,
+    # 그 오프셋이 확보한 상단 여백 안에 들어가는지 행 수와 무관하게 확인한다.
+    for frame_ in (pivot.iloc[:1], pivot.reindex([f"{m}월" for m in range(1, 13)])):
+        fig = charts.dow_month_heatmap(frame_, subtitle="부제")
+        note = next(a for a in fig.layout.annotations if a.text == "부제")
+        assert note.y <= 1 and note.yshift > 0, "부제 위치는 높이에 비례하면 안 된다"
+        assert note.yshift < fig.layout.margin.t, "부제가 상단 여백 밖으로 나간다"
+
     frame = crosssell.treemap_frame(sales, S.CH_CASINO)
     assert not frame.empty
     assert charts.venue_treemap(frame).data
