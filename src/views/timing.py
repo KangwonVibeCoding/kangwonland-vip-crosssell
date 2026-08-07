@@ -62,11 +62,21 @@ def render(ctx: dict) -> None:
     else:
         headline = "모든 채널이 유입 당일에 반응한다"
         sub = "이 구간에서는 지연 반응 채널이 관측되지 않았다."
+    # 칩 순서는 `S.CHANNELS`(업무 순서)로 세운다.
+    # `best_lags()` 는 내부 영문 키 알파벳순(casino_fnb < local_goods < roomservice)
+    # 으로 돌려주는데, 그 키는 화면에 한 번도 등장하지 않는다. 그대로 쓰면 칩은
+    # "카지노 식음 · 지역특산품 · 룸서비스" 인데 **바로 아래 래그 히트맵**은
+    # "카지노 식음 · 룸서비스 · 지역특산품" 이라, 같은 세 채널을 인접한 두 요소가
+    # 다른 순서로 세우게 된다 — 읽는 사람이 대응을 매번 다시 찾아야 한다.
+    # 정렬은 표시용 사본에만 한다. `best` 원본은 아래 prescriptions() 로 넘어간다.
+    order = {ch: i for i, ch in enumerate(S.CHANNELS)}
+    chips = best.assign(_o=best["channel"].map(order).fillna(len(order))) \
+                .sort_values("_o")
     C.hero_banner(
         headline=headline, sub=sub,
         stats_pairs=[
             (f"{r.channel_label}", f"D+{int(r.best_lag)} · r={r.pearson:+.3f}")
-            for r in best.itertuples()
+            for r in chips.itertuples()
         ],
         badge="실측 조인",
         badge_detail=f"{int(matrix['n_days'].max())}일 기준",

@@ -64,12 +64,29 @@ def test_overview_pipeline(period_a, bundle):
     assert charts.inflow_stack(infl).data
     assert charts.corr_bars(head).data
 
-    # 요일 교란 통제 덤벨 — 채널당 이동 선분 1개 + 원 상관/편상관 마커 2개
+    # 요일 교란 통제 덤벨 — 채널당 이동 선분 1개 + 범례용 중립 더미 2개
+    # + 원 상관/편상관 마커 2개
     confound = stats.confound_table(ars, sales)
     assert len(confound) == len(S.CHANNELS)
     dumbbell = charts.confound_dumbbell(confound)
-    assert len(dumbbell.data) == len(confound) + 2
+    assert len(dumbbell.data) == len(confound) + 4
     assert dumbbell.data[-1].error_x.array is not None, "부트스트랩 CI 오차막대가 없다"
+
+    # 범례는 '모양'만 설명해야 한다. 실제 점은 채널색 3종인데 plotly 는
+    # marker.color 리스트의 **첫 색만** 범례에 그려서, 범례가 "통제 후 = 초록"
+    # 이라고 거짓말을 한 적이 있다. 범례에 남는 트레이스가 채널색을 쓰면 실패한다.
+    channel_colors = set(theme.CHANNEL_COLOR_BY_LABEL.values())
+    legend_traces = [t for t in dumbbell.data if t.showlegend]
+    assert len(legend_traces) == 2, "범례 항목은 원 상관 / 통제 후 둘뿐이어야 한다"
+    for trace in legend_traces:
+        color = trace.marker.color
+        assert not isinstance(color, (list, tuple)), (
+            "범례에 남는 트레이스의 marker.color 가 리스트다 — plotly 가 첫 색만 "
+            "그려서 범례가 실제 점 색과 어긋난다."
+        )
+        assert color not in channel_colors, (
+            f"범례 스와치가 채널색({color})이라 특정 채널을 가리키는 것처럼 읽힌다."
+        )
     assert charts.segment_donut(seg).data
     assert charts.age_gender_bars(data["demo"]).data
 
@@ -86,6 +103,16 @@ def test_fnb_pipeline(period_a):
     pivot = crosssell.heatmap_dow_month(sales, S.CH_ROOM)
     assert list(pivot.columns) == list(S.DOW_NAMES)
     assert charts.dow_month_heatmap(pivot).data
+
+    # 히트맵 높이는 행 수에 비례해야 한다. 고정 높이면 31일 창(1행)에서 셀 하나가
+    # 세로로 늘어지고, 2년 창(12행)에서는 납작해진다. 빈 월 행을 감추는 것은 뷰의
+    # 표시 결정이므로(views/fnb_engine.py) 여기서는 차트가 행 수에 반응하는지만 본다.
+    one_row = charts.dow_month_heatmap(pivot.iloc[:1]).layout.height
+    many_rows = charts.dow_month_heatmap(pivot).layout.height
+    assert many_rows >= one_row
+    assert charts.dow_month_heatmap(
+        pivot.reindex([f"{m}월" for m in range(1, 13)])
+    ).layout.height > one_row, "행이 늘어도 높이가 고정이면 셀 비율이 무너진다"
 
     frame = crosssell.treemap_frame(sales, S.CH_CASINO)
     assert not frame.empty

@@ -151,14 +151,33 @@ def confound_dumbbell(table: pd.DataFrame) -> go.Figure:
             line=dict(color=color, width=3), opacity=0.35,
             hoverinfo="skip", showlegend=False,
         ))
+    # ⚠ 범례는 **모양**만 설명한다. 점의 색은 채널 아이덴티티(파랑=카지노 식음,
+    # 주황=룸서비스, 초록=지역특산품)라 범례 한 칸에 담기지 않는다. 그런데
+    # `marker.color` 에 리스트를 주면 plotly 는 **리스트의 첫 색만** 범례에
+    # 그린다 — 그래서 범례가 "요일 통제 후 = 초록"이라고 말하는데 화면의 점은
+    # 주황·파랑·초록 3색인 상태였다. 범례가 틀린 것은 색을 잘못 쓴 것보다 나쁘다.
+    #
+    # 실제 점 트레이스는 범례에서 빼고, 중립색 더미 두 개로 모양만 설명한다.
+    for name, marker in (
+        ("원 상관", dict(size=MARKER_SIZE + 2, color=theme.INK["surface"],
+                        line=dict(color=theme.INK["muted"], width=2))),
+        ("요일 통제 후", dict(size=MARKER_SIZE + 4, color=theme.INK["secondary"])),
+    ):
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=name,
+            marker=marker, hoverinfo="skip", showlegend=True,
+        ))
+
     fig.add_trace(go.Scatter(
         x=df["raw"], y=labels, mode="markers", name="원 상관",
+        showlegend=False,
         marker=dict(size=MARKER_SIZE + 2, color=theme.INK["surface"],
                     line=dict(color=theme.INK["muted"], width=2)),
         hovertemplate=_hover("%{y}", "원 상관 r %{x:.3f}"),
     ))
     fig.add_trace(go.Scatter(
         x=df["partial"], y=labels, mode="markers+text", name="요일 통제 후",
+        showlegend=False,
         marker=dict(size=MARKER_SIZE + 4, color=colors),
         error_x=dict(
             type="data", symmetric=False,
@@ -277,14 +296,22 @@ def dow_month_heatmap(pivot: pd.DataFrame, *, subtitle: str = "") -> go.Figure:
             text=f"<b>{z[idx]:,.0f}</b>", showarrow=False,
             font=dict(color="#ffffff", size=11),
         )
+    # 행이 1개(31일 구간)든 12개(2년 구간)든 셀이 납작해지거나 늘어나지 않게
+    # 행 수에 비례시킨다. 예전엔 430 고정이라 한 달짜리 창에서 셀 하나가
+    # 세로로 400px 가까이 늘어났다.
+    height = max(46 * len(pivot.index) + 120, 200)
+    # ⚠ x축이 `side="top"` 이라 눈금 라벨이 그림 위쪽을 쓴다. 부제를 y=1.10 에
+    # 두고 위 여백을 40 만 주면 **요일 라벨과 부제가 같은 자리에 겹쳐 찍힌다**
+    # (실제로 그랬다). 부제가 있을 때는 여백을 늘리고 라벨 위로 밀어 올린다.
     fig.update_layout(
-        height=430, margin=dict(l=8, r=8, t=40 if subtitle else 8, b=8),
+        height=height, margin=dict(l=8, r=8, t=76 if subtitle else 8, b=8),
         yaxis=dict(autorange="reversed", showgrid=False),
         xaxis=dict(showgrid=False, side="top"),
     )
     if subtitle:
         fig.add_annotation(
-            text=subtitle, xref="paper", yref="paper", x=0, y=1.10,
+            text=subtitle, xref="paper", yref="paper", x=0, y=1,
+            yshift=52, yanchor="bottom",
             showarrow=False, xanchor="left",
             font=dict(size=11, color=theme.INK["muted"]),
         )
@@ -317,9 +344,15 @@ def top_items_bar(items: pd.DataFrame, *, value_col: str = "total_qty",
         marker_line=dict(color=theme.INK["surface"], width=2),
         hovertemplate=_hover("%{y}", f"{value_label} %{{x:,}}"),
     )
+    # ⚠ x축 상한을 직접 늘린다. `textposition="outside"` 라벨은 막대 **밖**에
+    # 그려지는데, 축이 데이터 최댓값에 딱 맞으면 1위 막대의 라벨이 플롯 경계에서
+    # 잘린다 (실측: "3,461" 이 "3," 로 잘려 나왔다). 오른쪽 여백(r=76)은 축
+    # 바깥 영역이라 이 잘림을 막지 못한다 — 축 자체에 여유를 줘야 한다.
+    vmax = float(pd.to_numeric(df[value_col], errors="coerce").max() or 0)
     fig.update_layout(
         height=max(26 * len(df) + 90, 220), hovermode="closest",
         margin=dict(l=8, r=76, t=36, b=8), bargap=0.25,
+        xaxis=dict(range=[0, vmax * 1.18]) if vmax > 0 else {},
     )
     return fig
 

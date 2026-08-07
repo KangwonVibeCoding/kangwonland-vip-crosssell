@@ -167,9 +167,15 @@ def merchant_deck(df: pd.DataFrame, radius_km: float = S.DEFAULT_RADIUS_KM) -> p
             get_position=["lon", "lat"],
             get_fill_color="color",
             get_radius="radius",
-            radius_min_pixels=5, radius_max_pixels=26,
-            stroked=True, get_line_color=[252, 252, 251], line_width_min_pixels=2,
-            pickable=True, opacity=0.85,
+            # ⚠ 상한을 26px 로 두면 마커가 서로를 덮는다. 반경 15km 안에 가맹점이
+            # 665곳이고 그중 상당수가 사북·고한 읍내에 몰려 있어서, 26px 원이
+            # 불투명도 0.85 로 겹치면 개별 가맹점이 아니라 색 덩어리로 보인다
+            # (실측 화면에서 확인). 크기는 여전히 적합도를 인코딩하되(3~13px,
+            # 4배 이상 차이) 겹칠 때 밀도가 비쳐 보이도록 반투명하게 둔다.
+            # 흰 테두리도 작은 마커에서는 2px 가 원을 다 먹어 1px 로 낮춘다.
+            radius_min_pixels=3, radius_max_pixels=13,
+            stroked=True, get_line_color=[252, 252, 251], line_width_min_pixels=1,
+            pickable=True, opacity=0.6,
         ))
     layers.append(pdk.Layer(
         "ScatterplotLayer",

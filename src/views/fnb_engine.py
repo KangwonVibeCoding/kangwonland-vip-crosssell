@@ -71,6 +71,17 @@ def render(ctx: dict) -> None:
     if pivot.empty or not pivot.notna().to_numpy().any():
         C.empty_state("이 채널·구간에는 히트맵을 그릴 데이터가 없습니다.")
     else:
+        # 창에 데이터가 하나도 없는 달은 **표시에서** 뺀다.
+        # `heatmap_dow_month` 는 1~12월을 항상 펼쳐서 돌려준다 — 달력 순서를
+        # 고정하려는 것이고, 그건 분석 함수로서 옳다. 다만 그대로 그리면 31일
+        # 구간에서 12행 중 11행이 빈 줄로 남아 높이 400px 이상을 쓰면서 아무것도
+        # 말하지 않는다. 창에 없는 달을 '빈 셀'로 그리는 것은 결측을 보여주는 게
+        # 아니라 필터 상태를 그린 것이라 오해를 부른다.
+        # ⚠ 자르는 일은 여기(뷰)서 한다. 분석 함수의 반환을 바꾸면 그 함수를 쓰는
+        #   다른 곳과 회귀 기준값까지 같이 흔들린다.
+        months_all = len(pivot.index)
+        pivot = pivot.loc[pivot.notna().any(axis=1)]
+        months_present = len(pivot.index)
         st.plotly_chart(
             charts.dow_month_heatmap(
                 pivot,
@@ -86,9 +97,15 @@ def render(ctx: dict) -> None:
         flat = pivot.stack()
         if not flat.empty:
             (month, dow), value = flat.idxmax(), flat.max()
+            # 창에 없는 달은 행에서 뺐다 — 몇 달치를 보고 있는지 밝히지 않으면
+            # 이 히트맵이 '연간 계절성'인지 '한 달 주간 패턴'인지 구분되지 않는다.
+            scope = ("이 구간에 데이터가 있는 달은 "
+                     f"{months_present}개월이라 그만큼만 행으로 세웠습니다. "
+                     if months_present < months_all else "")
             C.caveat(
                 f"최고 수요 지점: {month} {dow}요일 (평균 {value:,.0f}개). "
-                f"{S.CHANNEL_LABEL.get(picked, picked)} 기준."
+                f"{S.CHANNEL_LABEL.get(picked, picked)} 기준. {scope}"
+                "계절성까지 읽으려면 사이드바에서 '연간 확장' 구간을 선택하세요."
             )
 
     # ── VIP 상품 Top + 트리맵 ─────────────────────────────────────────
@@ -212,10 +229,13 @@ def render(ctx: dict) -> None:
             )
         comp_qty = float(sales.loc[sales["is_comp"], "qty"].sum())
         if comp_qty:
+            # 컴프는 '(V)' 접두만이 아니다 — '무료' 표기 쪽이 13배 크다.
+            # 수치는 is_comp 합계인데 문구만 (V) 를 말하면 둘이 어긋난다.
             C.caveat(
-                f"'(V)' 접두 상품 {C.fmt_int(comp_qty)}개는 컴프/바우처로 추정되어 "
-                "마진 기여를 0으로 두고 티어를 일반으로 강등했습니다 "
-                f"(전체 수량의 {comp_qty / total_qty * 100:.1f}%)."
+                f"'(V)' 접두 · '무료' 표기 상품 {C.fmt_int(comp_qty)}개는 컴프/"
+                "바우처로 추정되어 마진 기여를 0으로 두고 티어를 일반으로 "
+                f"강등했습니다 (전체 수량의 {comp_qty / total_qty * 100:.1f}%). "
+                "마진만 0으로 두면 물량·탄력성 신호가 남아 CSM 상위를 점령합니다."
             )
 
     # ── 번들 추천 ─────────────────────────────────────────────────────
