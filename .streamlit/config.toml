@@ -30,6 +30,29 @@ dataframeBorderColor = "#e1e0d9"
 # 링크는 본문 대비 4.5:1 이 나오는 --kl-on-blue 를 쓴다 (기본 파랑은 미달).
 linkColor = "#2469bc"
 
+# ── 사이드바: 딥 네이비 ─────────────────────────────────────────────
+# 헤더·hero 를 네이비로 눕히고 사이드바만 밝게 두면 둘이 따로 논다.
+# 조작부(사이드바)를 어둡게 · 내용부(본문)를 밝게 두면 필터를 만지는 곳과
+# 결과를 읽는 곳이 눈으로 구분된다.
+#
+# ⚠ primaryColor 를 골드로 두는 건 취향이 아니라 명암비 때문이다.
+#   Streamlit 은 이 색을 멀티셀렉트 태그 배경으로 쓰는데(사이드바에 태그가
+#   10개 넘게 뜬다) 기존 #2a78d6 위의 흰 글자는 4.42:1 로 AA 미달이었다.
+#   골드 #cba95c 는 어두운 글자와 7.81:1 이라 통과하고 톤도 맞는다.
+[theme.sidebar]
+backgroundColor = "#0d1a2b"
+secondaryBackgroundColor = "#1c3450"
+textColor = "#f4f6f9"
+primaryColor = "#cba95c"
+borderColor = "#27466a"
+
+[client]
+# 우상단 툴바에서 **개발자 옵션**(Deploy · Rerun · Clear cache)을 감춘다.
+# 심사·발표 화면에 배포 버튼이 떠 있으면 완성된 제품이 아니라 작업 중인
+# 콘솔처럼 보인다. "minimal" 이 아니라 "viewer" 인 이유는 인쇄·스크린샷 같은
+# **열람자 옵션은 남겨야** 심사위원이 화면을 갈무리할 수 있기 때문이다.
+toolbarMode = "viewer"
+
 [server]
 headless = true
 

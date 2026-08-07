@@ -41,21 +41,67 @@ def section_header(title: str, subtitle: str = "", badge: str = "",
     st.markdown("".join(bits), unsafe_allow_html=True)
 
 
+def app_header(title: str, badge: str, meta: str,
+               stat_label: str = "", stat_value: str = "",
+               stat_note: str = "") -> None:
+    """상단 헤더 패널 — 제목·구간 배지·메타·요약 지표를 **한 덩어리**로 그린다.
+
+    st.columns 로 좌우를 나누면 두 개의 독립 DOM 이라 하나의 패널 배경을 씌울 수
+    없다(컬럼 사이 간격으로 배경이 갈라진다). 그래서 마크업 하나로 내보내고
+    배치는 CSS flex 에 맡긴다 — 좁은 화면에서 자동으로 위아래로 쌓이는 것도
+    여기서 온다.
+
+    app.py 는 오케스트레이션만 하는 자리이므로 마크업은 이 층에 둔다.
+    """
+    stat_html = ""
+    if stat_value:
+        note = (f'<span class="kl-header-stat-note">{_esc(stat_note)}</span>'
+                if stat_note else "")
+        stat_html = (
+            '<div class="kl-header-stat">'
+            f'<span class="kl-header-stat-label">{_esc(stat_label)}</span>'
+            f'<span class="kl-header-stat-value">{_esc(stat_value)}</span>'
+            f'{note}</div>'
+        )
+    st.markdown(
+        '<div class="kl-header">'
+        '<div class="kl-header-main">'
+        f'<div class="kl-app-title">{_esc(title)}</div>'
+        f'<div class="kl-app-sub">{period_badge(badge)}'
+        f'<span class="kl-app-meta">{_esc(meta)}</span></div>'
+        '</div>'
+        f'{stat_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def kpi_card(label: str, value: str, delta: str = "", delta_dir: int = 0,
-             note: str = "", accent: str | None = None) -> None:
-    """KPI 카드. delta_dir: 1 상승 / -1 하락 / 0 중립."""
+             note: str = "", accent: str | None = None,
+             compact: bool = False) -> None:
+    """KPI 카드. delta_dir: 1 상승 / -1 하락 / 0 중립.
+
+    `compact` 는 **행에 속하지 않은 단독 카드**용이다. 기본 카드는 delta 가
+    없어도 `&nbsp;` 로 그 줄을 남긴다 — 5장이 나란히 선 KPI 행에서 값의 세로
+    위치가 카드마다 어긋나지 않게 하려는 장치다. 하지만 헤더처럼 카드가 하나뿐인
+    자리에서는 그 빈 줄이 카드를 이유 없이 키워 제목과의 정렬을 흐트러뜨린다.
+    """
     color = theme.INK["up"] if delta_dir > 0 else (
         theme.INK["down"] if delta_dir < 0 else theme.INK["muted"]
     )
     arrow = "▲" if delta_dir > 0 else ("▼" if delta_dir < 0 else "")
     accent = accent or theme.SERIES[0]
-    delta_html = (
-        f'<div class="kl-kpi-delta" style="color:{color}">{arrow} {_esc(delta)}</div>'
-        if delta else '<div class="kl-kpi-delta">&nbsp;</div>'
-    )
+    if delta:
+        delta_html = (
+            f'<div class="kl-kpi-delta" style="color:{color}">'
+            f'{arrow} {_esc(delta)}</div>'
+        )
+    else:
+        # 단독 카드는 자리막이를 넣지 않는다 (위 docstring 참조)
+        delta_html = "" if compact else '<div class="kl-kpi-delta">&nbsp;</div>'
     note_html = f'<div class="kl-kpi-note">{_esc(note)}</div>' if note else ""
+    cls = "kl-kpi kl-kpi-compact" if compact else "kl-kpi"
     st.markdown(
-        f'<div class="kl-kpi" style="--accent:{accent}">'
+        f'<div class="{cls}" style="--accent:{accent}">'
         f'<div class="kl-kpi-label">{_esc(label)}</div>'
         f'<div class="kl-kpi-value">{_esc(value)}</div>'
         f'{delta_html}{note_html}</div>',
