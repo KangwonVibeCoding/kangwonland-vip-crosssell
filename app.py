@@ -52,6 +52,33 @@ def load_all():
 
 data, sources = load_all()
 
+
+# ── 4. 사이드바 필터 ───────────────────────────────────────────────────
+fs = sidebar.render(data, sources)
+
+
+# ── 5. 헤더 ────────────────────────────────────────────────────────────
+# ⚠ 헤더가 데이터 출처 안내보다 **먼저** 온다. 예전에는 폴백 경고와 API 안내가
+# 제목 위에 있어서, 처음 접속한 사람이 보는 첫 문장이 "데이터를 데모용으로
+# 대체했습니다"였다. 안내는 숨길 것이 아니지만 첫인상일 이유도 없다 —
+# 무엇을 보는 화면인지 먼저 말하고, 그 다음에 어떤 근거로 그렸는지 말한다.
+#
+# 우측 지표에 st.metric 을 쓰지 않는다. delta 자리에 증감이 아닌 설명
+# ("31일 커버리지")을 넣으면 delta_color="off" 로도 **화살표가 남아** 증가한
+# 것처럼 읽힌다. 일수는 이미 메타 줄에 있으므로 여기서는 어떤 채널인지를 말한다.
+seg = ", ".join(fs.age_bands) if fs.age_bands else "전체 연령"
+C.app_header(
+    title="🎰 VIP 카지노–리조트 교차판매 대시보드",
+    badge=fs.period_badge,
+    meta=(f"{fs.start:%Y-%m-%d} ~ {fs.end:%Y-%m-%d} · {fs.n_days:,}일"
+          f" · 세그먼트 {seg} / {fs.gender}"),
+    stat_label="분석 채널",
+    stat_value=f"{len(fs.channels)}개",
+    stat_note=" · ".join(S.CHANNEL_LABEL.get(c, c) for c in fs.channels)
+              or "선택된 채널 없음",
+)
+
+# ── 6. 데이터 출처 안내 (헤더 다음) ────────────────────────────────────
 fallback_keys = [k for k, v in sources.items() if v not in S.REAL_SOURCES]
 if fallback_keys:
     names = {"ars": "ARS 예약", "sales": "판매 3종", "golf": "골프장 이용객",
@@ -71,33 +98,10 @@ if errors := api_client.get_errors():
             "API 호출이 실패해도 대시보드는 모킹/내장 데이터로 정상 동작합니다."
         )
 
-
-# ── 4. 사이드바 필터 ───────────────────────────────────────────────────
-fs = sidebar.render(data, sources)
-
-
-# ── 5. 헤더 ────────────────────────────────────────────────────────────
-left, right = st.columns([0.74, 0.26], vertical_alignment="bottom")
-with left:
-    st.markdown(
-        '<div class="kl-app-title">🎰 VIP 카지노–리조트 교차판매 대시보드</div>',
-        unsafe_allow_html=True,
-    )
-    seg = ", ".join(fs.age_bands) if fs.age_bands else "전체 연령"
-    st.markdown(
-        f'<div class="kl-app-sub">{C.period_badge(fs.period_badge)}'
-        f'<span class="kl-app-meta">{fs.start:%Y-%m-%d} ~ {fs.end:%Y-%m-%d}'
-        f' · {fs.n_days:,}일 · 세그먼트 {seg} / {fs.gender}</span></div>',
-        unsafe_allow_html=True,
-    )
-with right:
-    st.metric("분석 채널", f"{len(fs.channels)}개",
-              f"{fs.n_days:,}일 커버리지", delta_color="off")
-
 st.divider()
 
 
-# ── 6. 탭 라우팅 (탭 단위 예외 격리) ───────────────────────────────────
+# ── 7. 탭 라우팅 (탭 단위 예외 격리) ───────────────────────────────────
 ctx = {"data": data, "filters": fs, "sources": sources}
 
 tabs = st.tabs([
@@ -119,7 +123,7 @@ for tab, view in zip(tabs, (overview, fnb_engine, timing, local_curation)):
                 st.exception(exc)
 
 
-# ── 7. 푸터 ────────────────────────────────────────────────────────────
+# ── 8. 푸터 ────────────────────────────────────────────────────────────
 st.divider()
 st.caption(
     "출처: 공공데이터포털 (주)강원랜드 개방 데이터  ·  "
