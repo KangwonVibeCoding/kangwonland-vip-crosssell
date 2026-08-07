@@ -284,6 +284,12 @@ def normalize_demographics(df: pd.DataFrame) -> pd.DataFrame:
     """고객성별연령분석현황 표준화. 연령대 표기 변형을 흡수한다."""
     df, _ = rename_columns(df)
     out = df.assign(visitors=_to_int(df["visitors"]))
+    # 실 API 는 BSN_DT 로 일자를 준다. 다른 데이터셋의 `date` 가 전부 datetime64 라
+    # 문자열로 두면 축약본 생성·parquet dtype 이 데이터셋마다 갈린다.
+    # `add_date_parts()` 는 쓰지 않는다 — 이 프레임은 일별 분석에 쓰이지 않고
+    # (제공 기간이 판매와 겹치지 않는다) 요일·월 파생이 필요 없다.
+    if "date" in out.columns:
+        out = out.assign(date=pd.to_datetime(out["date"], errors="coerce"))
     for col in ("gender", "age_band"):
         out = out.assign(
             **{col: out[col].astype("string").fillna("").str.strip()}
@@ -292,6 +298,10 @@ def normalize_demographics(df: pd.DataFrame) -> pd.DataFrame:
     band = out["age_band"].str.replace(r"\s+", "", regex=True)
     band = band.str.replace("세", "대", regex=False)
     band = band.where(~band.str.contains("이상|60\\+", regex=True, na=False), "60대이상")
+    # 실 API 는 60대·70대를 나눠 준다. S.AGE_BANDS_ALL 의 최상단이 '60대이상' 이라
+    # 접지 않으면 `vip_ratio` 의 isin 필터가 두 밴드를 통째로 버린다 — VIP 비중이
+    # 조용히 과소 집계된다. 앱 전체가 60대 이상을 한 덩어리로 다루므로 여기서 접는다.
+    band = band.where(~band.isin(["60대", "70대", "80대", "90대"]), "60대이상")
     return out.assign(age_band=band)
 
 

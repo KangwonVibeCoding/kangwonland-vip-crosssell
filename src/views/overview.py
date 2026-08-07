@@ -268,6 +268,12 @@ def render(ctx: dict) -> None:
     ars_all: pd.DataFrame = ctx["data"]["ars"]
     sales_all: pd.DataFrame = ctx["data"]["sales"]
     demo: pd.DataFrame = ctx["data"]["demo"]
+    # 성별연령 API 는 2026-06-10 부터 일자별로 온다(그 이전은 보유분 없음).
+    # 이 화면의 소비처(vip_ratio·도넛·그룹바·표)는 전부 기간 합계를 쓰므로 한 번
+    # 접는다 — 일별 행을 그대로 px.bar 에 넣으면 같은 (연령,성별) 조합이 58개
+    # 겹쳐 그려진다.
+    if "date" in demo.columns:
+        demo = demo.groupby(["gender", "age_band"], as_index=False)["visitors"].sum()
 
     ars = fs.slice_ars(ars_all)
     sales = fs.slice_sales(sales_all)
@@ -484,12 +490,15 @@ def render(ctx: dict) -> None:
     if not demo.empty:
         C.table_view(
             demo[["gender", "age_band", "visitors"]].rename(columns={
-                "gender": "성별", "age_band": "연령대", "visitors": "방문고객수"}),
+                "gender": "성별", "age_band": "연령대", "visitors": "고객수"}),
             label="성별·연령 데이터 표로 보기",
         )
         C.caveat(
-            "성별·연령 데이터는 기간 집계로 제공되어 일별 분해가 불가능합니다. "
-            "비율만 차용하고 일별 규모는 ARS 입장권 구매 건수에서 가져왔습니다."
+            "이 수치는 일별 방문객이 아니라 **누적 고객 수**입니다(원본 필드 "
+            "CUST_WHOL_CNT — 58일간 단조증가, 변동계수 0.005). 일자별로 제공되지만 "
+            "보유분이 2026-06-10 이후뿐이라 판매 기간(2023~2024)과 겹치지도 "
+            "않습니다. 그래서 규모가 아니라 **구성비만** 차용하고, 일별 규모는 "
+            "ARS 입장권 구매 건수에서 가져왔습니다."
         )
 
     # ── 캠페인 집행 캘린더 ────────────────────────────────────────────

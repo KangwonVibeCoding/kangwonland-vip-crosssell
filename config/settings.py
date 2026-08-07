@@ -22,11 +22,9 @@ CSS_PATH = ROOT / "assets" / "styles.css"
 INGEST_REPORT = RAW_DIR / "_ingest_report.txt"
 
 # ── Open API (공공데이터포털) ──────────────────────────────────────────
-# ⚠ 런타임에 이 API 를 호출하는 것에 의존하지 않는다. 제공기관 서버가 죽으면
-# 배포판이 같이 죽기 때문이다 — 실제로 2026-08-04 성별연령 API 가 게이트웨이는
-# 통과하는데 원본 서버에서 HTTP_ERROR(04) 를 돌려주는 상태였다.
-# `scripts/fetch_api_data.py` 로 **빌드 타임에 한 번** 받아 data/raw/*.csv 로
-# 떨구고, 앱은 그 파일을 L2/L3 로 읽는다. L4(런타임 호출)는 선택 계층으로만 남긴다.
+# ⚠ 런타임에 이 API 를 호출하는 것에 의존하지 않는다. `scripts/fetch_api_data.py`
+# 로 **빌드 타임에 한 번** 받아 data/raw/*.csv 로 떨구고, 앱은 그 파일을 L2/L3 로
+# 읽는다. L4(런타임 호출)는 선택 계층으로만 남긴다.
 #
 # 엔드포인트는 **전체 URL** 이다. 포털 계열마다 페이지 파라미터가 다르다:
 #   apis.data.go.kr  → pageNo / numOfRows   (응답: response.body.items)
@@ -38,6 +36,16 @@ EP_DEMOGRAPHICS = (
 EP_MERCHANTS = "https://apis.data.go.kr/B552525/pbdata/getStoreInfo"
 API_TIMEOUT = 8
 API_PAGE_SIZE = 1000
+
+# ⚠ 성별연령 엔드포인트는 dateFrom/dateTo 가 **필수**다. 빠뜨리면 서버가
+# `HTTP_ERROR(코드 04)` 를 돌려준다 — 04 는 보통 '제공기관 서버 다운'을 뜻해서
+# 2026-08-04 에 이를 서버 장애로 오진했다. 실제로는 우리 요청이 불완전했던 것이고,
+# 날짜를 넣으면 그때도 200 이 왔을 것이다(2026-08-08 확인).
+# 형식은 `YYYY-MM-DD` 고정 — `20260601` 은 `DATE_STRING_PATTERN_MISSMATCH(33)`.
+# pageNo/numOfRows 도 함께 보내야 한다(날짜만 보내면 빈 응답).
+# 범위는 넓게 잡아도 서버가 보유분만 돌려준다. 실보유는 2026-06-10~08-06 뿐이라
+# 판매(2023~2024)·구간 A(2024-12)와 겹치지 않는다 — 2024-12 조회는 totalCount 0.
+DEMO_PARAMS = {"dateFrom": "2023-01-01", "dateTo": "2026-12-31"}
 
 # ── 지리 기준점: 하이원리조트 / 강원랜드 ───────────────────────────────
 CASINO_LATLON = (37.2007, 128.8155)
@@ -148,10 +156,15 @@ COLUMN_MAP: dict[str, str] = {
     "영업장": "golf_venue",
     "영업상태": "open_status",
     "이용인원": "visitors",
-    # 인구통계 (Open API)
+    # 인구통계 (Open API — apis.data.go.kr/B552525/CustSexdstnAgeAnlsCnt)
+    # 실제 응답 필드는 영문 코드명이고, BSN_DT 로 **일자별**로 온다.
     "성별": "gender",
     "연령대": "age_band",
     "방문고객수": "visitors",
+    "bsndt": "date",
+    "sexdstnsenm": "gender",
+    "custagenm": "age_band",
+    "custwholcnt": "visitors",
     # 가맹점 (Open API — apis.data.go.kr/B552525/pbdata/getStoreInfo)
     # 실제 응답 필드는 영문 코드명이다. 위경도·업종 컬럼은 **응답에 없다** —
     # scripts/geocode_merchants.py 가 주소를 좌표·업종으로 바꿔 채운다.
