@@ -272,8 +272,8 @@ CII(d) = 0.45·n(입장권 구매 건수) + 0.35·n(내국인 총 접수자) + 0
 ```
 
 ⚠ **`총 당첨자`는 지표에서 제외했습니다.** 일일 정원 캡(최대 2,999명)에 묶여
-변동계수(CV)가 0.188 로 사실상 상수이기 때문입니다. 실제 변동을 담고 있는 신호는
-`내국인 총 접수자`(CV 0.349)와 `입장권 구매 건수`(CV 0.298)입니다.
+변동계수(CV)가 0.178 로 사실상 상수이기 때문입니다. 실제 변동을 담고 있는 신호는
+`내국인 총 접수자`(CV 0.372)와 `입장권 구매 건수`(CV 0.302)입니다.
 
 ### CAI — 객장 활동 지수 *(ARS 미보유 구간의 유입 프록시)*
 
@@ -503,7 +503,7 @@ app.py                  오케스트레이션만 — 로드 → 필터 → 탭 �
 ```
 L1 data/processed/*.parquet  →  캐시된 전처리 결과
 L2 data/raw/*.csv            →  ingest 산출물 (실데이터)
-L3 data/sample/*.csv         →  축약본 (배포용 실데이터)
+L3 data/sample/*.parquet     →  축약본 (배포용 실데이터)
 L4 Open API (data.go.kr)     →  실시간 + 디스크 캐시
 L5 data/mock/*.csv           →  합성 데이터
 L6 src/data/fallback.py      →  코드 내장 상수 · 파일/네트워크 접근 0
@@ -552,7 +552,7 @@ streamlit run app.py
 
 ```powershell
 pip install -r requirements-dev.txt                  # pytest 는 여기에 있습니다
-pytest tests\ -q                                    # 전체 (139개)
+pytest tests\ -q                                    # 전체 (146개)
 pytest tests\test_stats.py -q                       # 실측값 회귀만
 pytest tests\test_deploy_sample.py -q               # 배포 환경 시뮬레이션
 pytest tests\test_stats.py::test_headline_corr -v   # 단일 테스트

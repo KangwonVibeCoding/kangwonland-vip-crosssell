@@ -2,6 +2,52 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+<critical_rules>
+위반하면 발표 근거나 테스트가 깨지는 규칙. 다른 지시와 충돌하면 이 절이 이긴다.
+각 항목의 근거는 아래 본문에 있다.
+
+<never>
+1. `src/data`, `src/analysis` 에 `import streamlit` — 146개 테스트가 전부 깨진다
+2. `src/views/` 를 `src/pages/` 로 개명 — Streamlit 자동 멀티페이지와 충돌한다
+3. `golf` 를 `S.CHANNELS` 에 추가 — 단위(이용인원 ≠ 판매수량)와 기간이 달라
+   CAI·CSM 이 오염된다
+4. 결측을 0 으로 채워 축을 강행 (`recv_total`, 특산품 2024-12-17) — 없는 근거를
+   만드는 것이다. 없으면 축을 빼거나 NaN 으로 둔다
+5. 표본 미달 lift 를 1.0 으로, 탄력성을 0.5 로 채움 — 0.5 는 중립이 아니라
+   실측 상위 18% 대우다 (실측 중앙값 0.240). "표본 부족"이 점수 보너스가 된다
+6. 차트에 이중 축 · `use_container_width` (→ `width="stretch"`) ·
+   `color_discrete_map` 없이 계열 색을 plotly 기본 순환에 맡기기
+7. 구간 A(2024-12) 가 빠진 ARS 로 `data/sample/` 덮어쓰기 — 복원 원천이 사라진다
+</never>
+
+<source_of_truth>
+수치나 사실이 어긋나면 이 순서로 판정한다. 위가 이긴다.
+
+  1. `tests/test_stats.py`   ← 모든 실측 수치의 원본
+  2. `config/settings.py`    ← 모든 가중치·임계값·경로·패턴의 원본
+  3. 코드 구현
+  4. CLAUDE.md (이 파일)
+  5. README.md / Explain.md / docs/USER_GUIDE.md
+
+지침(4)이 코드(3)와 다르면 **코드가 옳다고 가정**하고, 지침을 고치기 전에
+사용자에게 알린다. 문서(5)끼리 다르면 test_stats.py 로 판정한다.
+</source_of_truth>
+
+<document_sync>
+실측 수치를 바꾸면 아래를 **같은 커밋에서** 갱신한다. 하나만 고치면 문서가 갈린다.
+
+| 바뀐 것 | 함께 고칠 곳 |
+|---|---|
+| 상관·편상관·래그·요일·월 지수 | test_stats.py → README §가설검증 → Explain §2 → USER_GUIDE §4·§6 |
+| 테스트 개수 | CLAUDE.md §회귀 기준값 · README §테스트 · Explain 3곳(현황·계층경계·실행) |
+| 요일/월 인덱스·티어 비율 | `src/data/fallback.py` 상수 + 모듈 docstring |
+| 데이터 계층 경로 | `loaders.py` 헤더 주석 · CLAUDE.md · README (3곳) |
+
+수치를 문서에 적을 때는 **어느 구간(A/B/C)·어느 창 길이의 값인지 함께 적는다.**
+같은 지표가 창마다 다르다 (특산품 9월: 1년 1.48 / 2년 1.43).
+</document_sync>
+</critical_rules>
+
 ## 프로젝트
 
 강원랜드 공공데이터 기반 **VIP 카지노–리조트 교차판매 마케팅 대시보드** (Streamlit).
@@ -149,8 +195,10 @@ dateFrom=2026-06-01      → resultCode 0 Success       ← 형식은 YYYY-MM-DD
 - ⚠ **`CUST_WHOL_CNT` 는 방문객 수가 아니라 누적 고객 수다.** 58일 내내 단조증가
   (655,249 → 668,549), 변동계수 0.0054. 일 66만 명은 방문객일 수 없다(ARS 정원
   캡이 일 2,999명). **규모로 인용하면 안 되고 구성비로만 쓴다** — VRB 가 원래
-  비율만 차용하므로 결과는 바뀌지 않는다(vip_ratio 0.666, 임베드 폴백 설계값
-  0.68 과 일치). UI 라벨은 "방문고객수" → "고객수" 로 고쳤다.
+  비율만 차용하므로 결과는 바뀌지 않는다(실측 vip_ratio 0.666). UI 라벨은
+  "방문고객수" → "고객수" 로 고쳤다. 임베드 폴백도 같은 0.666 으로 맞춰 뒀다 —
+  "0.68 로 설계했고 실측과 일치한다"고 적혀 있었으나 실제 폴백값은 0.752 였다
+  (`test_fallback.py` 가 이제 고정한다).
 - 연령대가 `20~70대 + 기타` 로 오는데 앱 어휘는 `60대이상` 이 최상단이다.
   `normalize_demographics` 가 60·70대를 접는다 — 접지 않으면 `vip_ratio` 의
   `isin` 이 두 밴드를 통째로 버려 VIP 비중이 조용히 과소 집계된다.
@@ -167,13 +215,13 @@ dateFrom=2026-06-01      → resultCode 0 Success       ← 형식은 YYYY-MM-DD
 ```
 L1 data/processed/*.parquet  → PROCESSED
 L2 data/raw/*.csv            → RAW      + parquet 캐시 기록
-L3 data/sample/*.csv         → SAMPLE
+L3 data/sample/*.parquet     → SAMPLE
 L4 Open API (data.go.kr)     → API      + 디스크 캐시
 L5 data/mock/*.csv           → MOCK
 L6 src/data/fallback.py      → EMBEDDED  파일·네트워크 접근 0 → 절대 실패 없음
 ```
 
-`fallback.py` 는 난수를 쓰지 않고 실측 통계(요일지수 토 1.45, 특산품 9월 1.48,
+`fallback.py` 는 난수를 쓰지 않고 실측 통계(ARS 요일지수 토 1.45, 특산품 9월 1.43,
 D+1 시차)를 모사한다 — 폴백 상태에서도 차트가 의미 있게 보여야 데모가 성립한다.
 `hash()` 대신 md5 기반 `_stable_num()` 을 쓰는 이유는 PYTHONHASHSEED 무작위화다.
 
@@ -331,7 +379,7 @@ D+1 시차)를 모사한다 — 폴백 상태에서도 차트가 의미 있게 �
 **구간 A(2024-12) 기반 수치는 데이터 교체 후에도 전부 그대로다.** 흔들린 것은 판매
 2년 확장의 영향을 받는 총량·연간 지표뿐이다. 이 구분이 회귀 테스트를 읽는 열쇠다.
 
-실데이터(`data/raw`)가 없으면 해당 테스트는 skip 된다. 현재 139개 전부 통과.
+실데이터(`data/raw`)가 없으면 해당 테스트는 skip 된다. 현재 146개 전부 통과.
 
 ## 환경 주의사항
 
@@ -361,68 +409,35 @@ D+1 시차)를 모사한다 — 폴백 상태에서도 차트가 의미 있게 �
 - Linux 는 파일명 대소문자를 구분한다. 저장소에 한글 파일명이 남지 않게 한다
   (`data/incoming/` 은 gitignore).
 
-## 행동 가이드라인
+<workflow>
+작업 방식. 사소한 변경에는 판단으로 생략해도 된다.
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+<before_coding>
+- **수치를 인용하기 전에 `tests/test_stats.py` 에서 확인한다.** 기억이나 문서 인용은
+  근거가 아니다 — 문서끼리 어긋난 전례가 있다.
+- 스키마·전처리를 건드리면 `Remove-Item data\processed\*.parquet` 을 **먼저** 한다.
+  로더가 parquet 캐시를 L1 으로 읽어 옛 dtype·옛 티어 분류가 계속 나온다.
+- 해석이 갈리면 고르지 말고 묻는다. 단 답을 기다리는 동안 **무관한 부분은 끝내둔다.**
+- 더 단순한 안이 있으면 말한다. 근거가 있으면 되받아쳐도 된다.
+</before_coding>
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+<while_coding>
+- 변경은 요청에 직접 대응하는 줄로 한정한다. 인접 코드를 "개선"하지 않고, 고장나지
+  않은 것을 리팩터링하지 않는다. 관련 없는 죽은 코드는 **지우지 말고 알린다.**
+- 내 변경이 만든 고아(미사용 import·변수)만 치운다.
+- 가중치·정규식·임계값은 `config/settings.py` 에만 둔다. 코드에 숫자를 박지 않는다.
+- 새 규칙·주석은 이 파일의 기존 톤을 따른다: **왜 → 무엇 → 위반 시 결과.**
+  "이렇게 해라"만 적힌 규칙은 다음 사람이 근거 없이 뒤집는다.
+</while_coding>
 
-### 1. Think Before Coding
+<verification>
+성공 기준을 먼저 정하고 끝까지 돌린다. 이 저장소의 기본 기준:
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+  1. `pytest tests\ -q` 전량 통과 — 146개. skip 은 `data/raw` 부재 시에만 정상
+  2. 수치를 바꿨다면 <document_sync> 표의 대상 문서를 전부 갱신
+  3. UI 를 바꿨다면 4개 탭을 전부 확인 — 탭 단위 예외 격리라 한 탭만 조용히 죽는다
 
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-### 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-### 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-### 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+**`test_stats.py` 가 깨지면 기대값부터 고치지 않는다.** 왜 바뀌었는지 규명하고,
+정당한 변화면 근거를 주석에 남긴 뒤 고친다. 대부분은 전처리 버그다.
+</verification>
+</workflow>

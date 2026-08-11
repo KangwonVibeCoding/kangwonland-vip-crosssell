@@ -1,9 +1,9 @@
-"""데이터 로더 — 4계층 폴백. 예외를 밖으로 던지지 않는다.
+"""데이터 로더 — 6계층 폴백. 예외를 밖으로 던지지 않는다.
 
 폴백 체인 (각 단계는 개별 try/except):
   L1 data/processed/*.parquet   → PROCESSED
   L2 data/raw/*.csv (ingest)    → RAW      + parquet 캐시 기록
-  L3 data/sample/*.csv          → SAMPLE
+  L3 data/sample/*.parquet      → SAMPLE
   L4 Open API                   → API
   L5 data/mock/*.csv            → MOCK
   L6 fallback.py 임베드 상수     → EMBEDDED  (파일·네트워크 접근 0 → 절대 실패 없음)

@@ -354,7 +354,7 @@ def test_local_goods_peaks_next_day(period_a):
 
 # ── 요일 / 월 인덱스 ──────────────────────────────────────────────────
 def test_dow_index_local_goods(period_a):
-    """특산품 일요일 1.68 / 목요일 0.66 — 체크아웃 선물 구매 패턴."""
+    """특산품 일요일 1.63 / 목요일 0.64 — 체크아웃 선물 구매 패턴."""
     _, sales_a = period_a
     idx = stats.dow_index(stats.daily_qty(sales_a, S.CH_LOCAL))
     name_to_pos = {n: i for i, n in enumerate(S.DOW_NAMES)}
