@@ -213,8 +213,12 @@ def hi_lo_days(inflow: pd.DataFrame,
 def dow_profile_table(ars: pd.DataFrame, sales: pd.DataFrame) -> pd.DataFrame:
     """ARS + 3채널 요일 인덱스 비교표 (탭3 의 4계열 차트용).
 
-    실측 하이라이트: 유입은 토요일 피크(1.45)인데 특산품은 일요일 1.68 —
-    '주말 유입 → 체크아웃 선물 구매' 시퀀스의 근거다.
+    실측 하이라이트: 유입은 토요일 피크(1.45)인데 특산품은 일요일 1.63 —
+    '주말 유입 → 체크아웃 선물 구매' 시퀀스의 근거다(구간 A = 2024-12 기준).
+
+    ⚠ 이 표는 넘겨받은 `sales` 의 창을 그대로 쓴다. 창이 바뀌면 값도 바뀐다 —
+    일요일 피크는 2023·2024 두 해 모두에서 재현되지만(각 1.36), 구간 A 의
+    '토요일 0.92(평균 이하)'는 2년 창에서 1.20 이라 재현되지 않는다.
     """
     rows: list[dict] = []
     if not ars.empty:
@@ -232,7 +236,7 @@ def dow_profile_table(ars: pd.DataFrame, sales: pd.DataFrame) -> pd.DataFrame:
 
 
 def month_profile_table(sales: pd.DataFrame) -> pd.DataFrame:
-    """채널별 월 인덱스 (계절성). 특산품 9월 1.48 / 룸서비스 1월 1.23 실측."""
+    """채널별 월 인덱스 (계절성). 특산품 9월 1.43 / 룸서비스 1월 1.21 실측(2년)."""
     rows: list[dict] = []
     for ch in S.CHANNELS:
         qty = stats.daily_qty(sales, ch)

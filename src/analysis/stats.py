@@ -57,7 +57,9 @@ def daily_tx(sales: pd.DataFrame, channel: str | None = None) -> pd.Series:
 def dow_index(series: pd.Series) -> pd.Series:
     """요일 인덱스 = 요일별 평균 / 전체 평균. index=0(월)…6(일).
 
-    실측 예: ARS 구매건수 토 1.45 / 일 1.31, 특산품 일 1.68 / 목 0.66
+    실측 예: ARS 구매건수 토 1.45 / 일 1.31, 특산품 일 1.63 / 목 0.64
+    (모두 구간 A = 2024-12 31일 기준. 창을 바꾸면 값이 달라진다 — 2년 전체로
+    보면 특산품 일 1.36 이다. 인용할 때 창 길이를 함께 적을 것.)
     """
     if series.empty:
         return pd.Series([np.nan] * 7, index=range(7), name="dow_index")
@@ -74,7 +76,8 @@ def dow_index(series: pd.Series) -> pd.Series:
 def month_index(series: pd.Series) -> pd.Series:
     """월 인덱스 = 월별 평균 / 전체 평균. index=1…12.
 
-    실측 예: 특산품 9월 1.48(추석 선물), 룸서비스 1월 1.23(설·스키 성수기)
+    실측 예: 특산품 9월 1.43(추석 선물), 룸서비스 1월 1.21(설·스키 성수기)
+    — 2023~2024 2년 평균. 1년치만 보면 1.48 / 1.23 으로 더 높다.
     """
     if series.empty:
         return pd.Series([np.nan] * 12, index=range(1, 13), name="month_index")

@@ -43,7 +43,7 @@ if css := _load_css(str(S.CSS_PATH)):
 theme.register_plotly_template()
 
 
-# ── 3. 데이터 로드 — 4계층 폴백. 어떤 실패도 앱을 죽이지 않는다 ──────────
+# ── 3. 데이터 로드 — 6계층 폴백. 어떤 실패도 앱을 죽이지 않는다 ──────────
 @st.cache_data(ttl=S.CACHE_TTL, show_spinner="공공데이터 로딩 중...")
 def load_all():
     """(데이터, 출처). 각 로더가 내부에서 폴백을 완결 처리한다."""

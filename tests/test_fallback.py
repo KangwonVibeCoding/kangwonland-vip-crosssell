@@ -122,6 +122,12 @@ def test_local_goods_spikes_on_sunday(embedded_sales):
 
     test_stats.py 가 실데이터에 대해 거는 것과 같은 불변식이다. 폴백에서 이게
     깨지면 데이터 없는 환경의 탭3 이 반대 서사를 말하게 된다.
+
+    ⚠ 이것은 **구간 A(2024-12) 불변식**이다 — 이 모듈이 생성하는 구간이고,
+    `_DOW_INDEX` 도 구간 A 실측이다. 2년 창에서는 특산품 토요일이 1.20(평균 이상)
+    이라 `SAT < 1.0` 이 성립하지 않는다. 재현되는 것은 '일요일 > 토요일' 방향뿐이다
+    (2023·2024 각 1.36 vs 1.20). 구간 A 가 넓어져 이 테스트가 깨지면 폴백 상수를
+    새 구간 A 실측으로 갱신하고, 낙차를 인용하는 문서도 같이 고칠 것.
     """
     SAT, SUN = 5, 6
     local = stats.dow_index(stats.daily_qty(embedded_sales, S.CH_LOCAL))

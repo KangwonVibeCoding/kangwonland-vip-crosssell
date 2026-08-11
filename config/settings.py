@@ -365,7 +365,7 @@ TOP_N_ITEMS = 15
 TOP_N_LOCAL = 20
 TOP_N_VTS_DAYS = 10
 
-# ── 데이터 출처 라벨 (4계층 폴백) ──────────────────────────────────────
+# ── 데이터 출처 라벨 (6계층 폴백) ──────────────────────────────────────
 SRC_PROCESSED = "PROCESSED"
 SRC_RAW = "RAW"
 SRC_SAMPLE = "SAMPLE"
