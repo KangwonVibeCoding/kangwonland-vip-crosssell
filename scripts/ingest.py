@@ -30,6 +30,7 @@ from src.data import schema                            # noqa: E402
 # 더 구체적인(고유 컬럼을 가진) 규칙을 먼저 둔다.
 SIG_ARS = "당첨자입장권구매율"
 SIG_ARS_EN = "purchaserate"              # 전처리본(ars_merged.csv)의 영문 헤더
+SIG_ARS_SHORT = "입장권구매율"            # 전처리 통합본(2023~2026)의 축약 헤더
 SIG_GOLF = "이용인원"                     # 골프장만 보유 (판매는 '판매수량')
 SIG_VENUE_ID = "영업장아이디id"          # 카지노 식음만 보유
 SIG_ITEM_ID = "상품아이디id"
@@ -49,7 +50,7 @@ def classify(df: pd.DataFrame) -> str | None:
     """헤더(+필요시 영업장명 값)로 데이터셋 종류를 판정한다."""
     keys = {schema.normalize_key(c) for c in df.columns}
 
-    if SIG_ARS in keys or SIG_ARS_EN in keys:
+    if SIG_ARS in keys or SIG_ARS_EN in keys or SIG_ARS_SHORT in keys:
         return KIND_ARS
     if SIG_GOLF in keys:
         return KIND_GOLF

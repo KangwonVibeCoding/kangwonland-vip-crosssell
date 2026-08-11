@@ -210,6 +210,32 @@ def hi_lo_days(inflow: pd.DataFrame,
     return hi, lo
 
 
+def hi_lo_days_by_month(inflow: pd.DataFrame,
+                        quantile: float = S.HI_LO_QUANTILE) -> tuple[set, set]:
+    """달마다 따로 고·저 유입일을 나눈 뒤 합친다 — **추세 제거용**.
+
+    ⚠ 전역 분위로 한 번에 자르면 유입에 추세가 있을 때 고유입일이 특정 시기로
+    몰린다. 실측(2023~2024 731일): 유입이 2023→2024 에 21.6% 감소해서
+    고유입일 220일 중 대부분이 2023년, 저유입일 대부분이 2024년에 쏠렸다.
+    그러면 lift 가 유입 탄력성이 아니라 **상품 수명주기**를 측정하게 된다 —
+    2023 상반기에 단종된 `(22)아이스아메리카노`(2023-01~06 에만 148,961개)가
+    lift 47.05 로 1위가 됐다. 유입에 민감한 게 아니라 그때만 존재한 상품이다.
+
+    달 안에서 자르면 비교가 항상 동시대끼리라 이 교란이 사라진다
+    (실측 lift 최댓값 47.05 → 2.02). 창이 한 달이면 `hi_lo_days` 와 동일하다 —
+    구간 A(2024-12) 결과가 그대로 보존되는 이유다.
+    """
+    if inflow.empty or len(inflow) < 6:
+        return set(), set()
+    hi: set = set()
+    lo: set = set()
+    for _, block in inflow.groupby(inflow["date"].dt.to_period("M")):
+        b_hi, b_lo = hi_lo_days(block, quantile)
+        hi |= b_hi
+        lo |= b_lo
+    return hi, lo
+
+
 def dow_profile_table(ars: pd.DataFrame, sales: pd.DataFrame) -> pd.DataFrame:
     """ARS + 3채널 요일 인덱스 비교표 (탭3 의 4계열 차트용).
 

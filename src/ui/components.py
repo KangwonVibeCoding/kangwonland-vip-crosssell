@@ -18,9 +18,13 @@ def _esc(value: object) -> str:
 
 def period_badge(badge: str, detail: str = "") -> str:
     """구간 배지 HTML. 어느 근거로 그린 값인지 항상 화면에 드러내기 위한 장치."""
+    # 새 배지는 기존 CSS 클래스를 재사용한다 — 클래스를 늘리면 contrast.py 의
+    # 대비 검증 쌍도 같이 늘려야 하고, 색을 새로 뽑으면 3색 규칙이 깨진다.
     tone = {
         "실측 조인": "badge-real",
+        "판매 실측": "badge-real",    # ARS 조인이 아닌 판매 단독 실측 (계절성 등)
         "요일 브릿지": "badge-bridge",
+        "31일 창": "badge-bridge",    # 표본이 좁아 결론이 갈릴 수 있는 창
         "최신 유입": "badge-latest",
         "추정": "badge-est",
     }.get(badge, "badge-neutral")

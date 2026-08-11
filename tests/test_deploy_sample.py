@@ -43,8 +43,11 @@ def test_sample_is_not_truncated(deployed):
     assert len(sales) == 284_866
     assert sales["date"].dt.month.nunique() == 12
     assert set(sales["date"].dt.year) == {2023, 2024}
-    assert len(data["ars"]) == 212
+    assert len(data["ars"]) == 1_247
     assert len(data["golf"]) == 2_703
+    # 배포판도 판매 전 기간을 조인할 수 있어야 한다. 축약본 ARS 가 잘리면
+    # Cloud 화면만 조용히 31일 창으로 되돌아간다.
+    assert set(sales["date"]) <= set(data["ars"]["date"])
 
 
 def test_sample_ars_carries_period_a(deployed):

@@ -147,6 +147,12 @@ def normalize_ars(df: pd.DataFrame) -> pd.DataFrame:
                 "win_ars", "win_mobile", "tickets")
     out = df.assign(**{c: _to_int(df[c]) for c in int_cols if c in df.columns})
 
+    # 전처리 통합본은 총당첨자 대신 ARS·모바일 당첨자만 준다. 합이 곧 총당첨자다
+    # (2024-12 원본 31일과 대조해 오차 0 확인). 여기서 복원하지 않으면 아래
+    # compete_ratio·buy_rate 계산이 winners 부재로 KeyError 를 낸다.
+    if "winners" not in out.columns and {"win_ars", "win_mobile"} <= set(out.columns):
+        out = out.assign(winners=out["win_ars"] + out["win_mobile"])
+
     # 없는 선택 컬럼은 float 결측으로 채워 둔다 — 이후 계산이 조건 분기 없이
     # NaN 전파로 자연스럽게 처리된다.
     for col in S.ARS_OPTIONAL:
@@ -157,6 +163,10 @@ def normalize_ars(df: pd.DataFrame) -> pd.DataFrame:
     if "buy_rate" in out.columns:
         rate = _to_float(out["buy_rate"])
         # 원본이 % 표기(30~53)이므로 1 을 넘으면 100 으로 나눈다.
+        # ⚠ 이 규칙이 실제로 일을 한다 — 전처리 통합본의 2023-08 31일치만
+        # 소수 표기(0.41~0.53)로 들어온다. 값 자체는 이미 0~1 이라 그대로 통과하고
+        # 나머지 1,216일은 100 으로 나뉜다. `tickets / winners` 검산으로 두 표기가
+        # 같은 값임을 확인했다. **단위를 일괄 변환하도록 바꾸지 말 것.**
         rate = rate.where(rate <= 1.0, rate / 100.0)
         out = out.assign(buy_rate=rate)
     elif {"tickets", "winners"} <= set(out.columns):

@@ -158,7 +158,7 @@ def render(ctx: dict) -> None:
             C.section_header(
                 "명절 선물 시즌 분석",
                 "특산품은 추석 전후(9~10월)에 수요가 몰린다. 연간 데이터 전체 기준.",
-                badge="요일 브릿지",
+                badge="판매 실측",
             )
             st.plotly_chart(charts.season_line(daily, highlight=(9, 10)),
                             width="stretch", key="lc_season")

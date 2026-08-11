@@ -24,11 +24,14 @@ SALES_END = pd.Timestamp("2024-12-31")
 EXPECTED_ROWS = {S.CH_CASINO: 179_287, S.CH_LOCAL: 69_353, S.CH_ROOM: 36_226}
 EXPECTED_ROWS_2024 = {S.CH_CASINO: 90_983, S.CH_LOCAL: 35_653, S.CH_ROOM: 18_514}
 
-# ARS 는 두 파일이 합쳐진다:
-#   ars_20241201_20241231.csv  2024-12  31행 — 구간 A 의 유일한 근거
-#   ars_merged.csv             2026 상반기 181행 (recv_total 계열 없음)
-EXPECTED_ARS_ROWS = 212
-EXPECTED_ARS_RECV_TOTAL_DAYS = 31     # recv_total 이 실제로 있는 날 수
+# ARS 는 두 파일이 합쳐진다 (2026-08-11 에 전처리 통합본이 들어오며 확장됐다):
+#   ars_20230101_20260630.csv  2023-01~2026-06  1,247행 — 2025-11 만 결측(이상치 제거)
+#   ars_20241201_20241231.csv  2024-12  31행 — ARS·모바일 *접수자* 계열을 보완한다
+#     (통합본에는 당첨자 분해만 있고 접수자 분해가 없다. 날짜 중복은 로더가
+#      제거하며 파일명 정렬상 원본이 뒤에 와서 이긴다)
+EXPECTED_ARS_ROWS = 1_247
+EXPECTED_ARS_RECV_TOTAL_DAYS = 1_247  # 통합본이 총접수자를 전 구간에 채운다
+EXPECTED_ARS_RECV_SPLIT_DAYS = 31     # ARS/모바일 *접수자* 분해는 2024-12 만
 
 # 무상 제공 상품 = '(V)' 접두 30,560개 + '무료' 포함 414,912개 (2023~2024 합산).
 # 후자가 13배 크고 전부 카지노 식음의 컴플리멘터리 음료다('18)헛개차(무료)' 등).
@@ -152,30 +155,49 @@ def test_sales_span_is_two_years(real_data):
 
 
 def test_ars_glob_concat(real_data):
-    """ARS 로더가 여러 파일을 concat 하는지 — 구간 A 성립의 전제.
+    """ARS 로더가 여러 파일을 concat 하고 날짜 중복을 제거하는지.
 
-    2026년 전처리본만으로는 판매 데이터(2023~2024)와 겹치는 날이 0일이라
-    실측 조인이 불가능하다. 2024-12 파일이 함께 잡혀야 한다.
+    통합본(2023~2026)과 2024-12 원본이 31일 겹친다. 중복을 지우지 않으면 그
+    31일이 두 번 세어져 상관·요일지수가 통째로 흔들린다.
     """
     ars = real_data["ars"]
     years = set(ars["date"].dt.year)
-    assert {2024, 2026} <= years, f"ARS 가 여러 기간을 포함해야 합니다: {years}"
+    assert {2023, 2024, 2025, 2026} <= years, f"ARS 기간이 좁습니다: {years}"
     assert len(ars) == EXPECTED_ARS_ROWS
+    assert not ars["date"].duplicated().any(), "날짜 중복이 남아 있습니다"
 
 
-def test_ars_recv_total_partially_present(real_data):
-    """recv_total 이 2024-12 에만 있고 2026 구간에서는 결측이어야 한다.
+def test_ars_covers_the_whole_sales_window(real_data):
+    """ARS 가 판매 전 기간(731일)을 덮는지 — 구간 B 실측 조인의 전제.
 
-    2026년 전처리본에서 총접수자 컬럼이 탈락했다. 0 으로 채우면 '그 날 접수자가
-    0명'이라는 거짓이 정규화 스케일과 상관계수에 그대로 들어가므로, 결측을
-    결측으로 유지하는 것이 요구사항이다.
+    2026-08-11 이전에는 겹치는 날이 2024-12 의 31일뿐이었고, 그 31일 표본이
+    특산품 래그를 D+1 로 보이게 했다(731일에서는 D+0). 창이 좁으면 결론이
+    뒤집힌다는 사실 자체를 여기서 고정한다.
+    """
+    ars = real_data["ars"]
+    sales = real_data["sales"]
+    ars_days = set(ars["date"])
+    sales_days = set(sales["date"])
+    assert len(ars_days & sales_days) == len(sales_days), (
+        f"판매일 {len(sales_days)}일 중 {len(ars_days & sales_days)}일만 ARS 가 있습니다"
+    )
+
+
+def test_ars_recv_total_is_present_throughout(real_data):
+    """총접수자가 전 구간에 있고, ARS/모바일 *접수자* 분해만 2024-12 에 한정되는지.
+
+    통합본이 총접수자를 채우면서 구간 C 의 2축 폴백이 필요 없어졌다. 다만
+    접수자 분해(recv_ars/recv_mobile)는 통합본에 없어서 2024-12 원본에만 있다 —
+    없는 컬럼을 0 으로 채우지 않는다는 규약은 그대로다.
     """
     ars = real_data["ars"]
     assert "recv_total" in ars.columns
-    have = ars.loc[ars["recv_total"].notna()]
-    assert len(have) == EXPECTED_ARS_RECV_TOTAL_DAYS
-    assert set(have["date"].dt.year) == {2024}
-    assert (ars.loc[ars["date"].dt.year == 2026, "recv_total"].isna()).all()
+    assert len(ars.loc[ars["recv_total"].notna()]) == EXPECTED_ARS_RECV_TOTAL_DAYS
+
+    split = ars.loc[ars["recv_ars"].notna()]
+    assert len(split) == EXPECTED_ARS_RECV_SPLIT_DAYS
+    assert set(split["date"].dt.year) == {2024}
+    assert ars.loc[ars["date"].dt.year == 2026, "recv_ars"].isna().all()
 
 
 def test_buy_rate_identity(real_data):
@@ -533,31 +555,48 @@ def test_period_a_uses_pressure_signal(period_a):
     assert bool(inflow_mod.compute_cii(ars_a)["pressure_signal"].iloc[0]) is True
 
 
-def test_period_c_falls_back_without_recv_total(period_c):
+@pytest.fixture(scope="module")
+def no_pressure_frame(period_c):
+    """총접수자가 없는 ARS 프레임.
+
+    2026-08-11 통합본이 들어오며 **실데이터에는 이런 구간이 더 이상 없다.**
+    그렇다고 폴백 코드를 지우면, 총접수자 없는 파일이 다시 들어왔을 때
+    '접수자 0명'이라는 거짓이 지수의 35% 를 차지하는 상태로 조용히 돌아간다.
+    그래서 실데이터 의존을 끊고 합성 프레임으로 그 경로를 계속 고정한다.
+    """
+    return period_c.assign(recv_total=np.nan)
+
+
+def test_cii_falls_back_without_recv_total(no_pressure_frame):
     """총접수자가 없어도 CII 가 계산되고, 폴백이었음이 드러나야 한다.
 
     없는 컬럼을 0 으로 채워 3축 계산을 강행하면 '접수자 0명'이라는 거짓 신호가
     지수의 35% 를 차지한다. 축을 빼고 재정규화하는 것이 정직한 처리다.
     """
-    assert not inflow_mod.has_pressure_signal(period_c)
+    assert not inflow_mod.has_pressure_signal(no_pressure_frame)
 
-    cii = inflow_mod.compute_cii(period_c)
-    assert len(cii) == len(period_c)
+    cii = inflow_mod.compute_cii(no_pressure_frame)
+    assert len(cii) == len(no_pressure_frame)
     assert bool(cii["pressure_signal"].iloc[0]) is False
     assert cii["cii"].between(0, 100).all()
     assert cii["cii"].std() >= 5, "폴백 CII 가 한 값에 뭉쳐 있음"
     assert cii["cii"].notna().all()
 
 
-def test_period_c_cii_ignores_stale_pressure_weights(period_c):
+def test_cii_ignores_stale_pressure_weights(no_pressure_frame):
     """3축 가중치를 넘겨도 폴백 경로가 안전한지 (사이드바 슬라이더 대응).
 
     wsum 이 parts 에 없는 키를 버리고 남은 가중치로 재정규화하므로, 결과가
     2축 전용 가중치를 넘겼을 때와 같아야 한다.
     """
-    with_stale = inflow_mod.compute_cii(period_c, S.INFLOW_WEIGHTS)
-    with_clean = inflow_mod.compute_cii(period_c, S.INFLOW_WEIGHTS_NO_PRESSURE)
+    with_stale = inflow_mod.compute_cii(no_pressure_frame, S.INFLOW_WEIGHTS)
+    with_clean = inflow_mod.compute_cii(no_pressure_frame, S.INFLOW_WEIGHTS_NO_PRESSURE)
     assert np.allclose(with_stale["cii"], with_clean["cii"], atol=1e-9)
+
+
+def test_period_c_now_has_pressure_signal(period_c):
+    """구간 C 도 이제 3축 CII 를 쓴다 — 통합본이 총접수자를 채웠다."""
+    assert inflow_mod.has_pressure_signal(period_c)
 
 
 def test_corr_table_skips_all_nan_metric(period_c, real_data):
@@ -900,7 +939,7 @@ def test_bundles_are_vip_tier(period_a, full_window):
 # 물량·마진이 둘 다 최상인 미측정 상품이 100점 1위가 된다(시뮬레이션 +22.5점).
 # 그래서 실측 분포의 중앙값으로 채운다.
 EXPECTED_FILL_A = 0.354      # 31일 창
-EXPECTED_FILL_FULL = 0.240   # 731일 창
+EXPECTED_FILL_FULL = 0.285   # 731일 창 (월내 층화 도입 후. 이전 0.240)
 
 
 def test_unmeasured_elasticity_uses_measured_median(period_a, full_window):
@@ -948,3 +987,104 @@ def test_unmeasured_items_cannot_top_the_ranking(period_a, full_window):
             "특산품 상위가 근거 없는 상품으로 채워졌다: "
             f"{list(local.loc[~local['lift_measured'], 'item'])}"
         )
+
+
+# ── 구간 B (731일 실측 조인) — 2026-08-11 통합본 이후의 본 창 ───────────
+# ARS 전처리 통합본(2023-01~2026-06)이 들어오면서 조인 가능일이 31일 → 731일이
+# 됐다. **여기서 결론이 하나 뒤집힌다.**
+#
+#   특산품 래그: 31일 창 D+1 (0.467 > 0.370) · 731일 창 D+0 (0.313 > 0.163)
+#
+# 두 해가 각각 독립적으로 D+0 을 가리킨다(2023: 0.490 vs 0.299 · 2024: 0.422 vs
+# 0.261). D+1 은 31일 창에서만 나오고, 그 창의 격차는 프로젝트가 이미 "95% CI 가
+# 0 을 포함한다"고 적어둔 그 차이다. 아래 두 테스트는 **양쪽 창의 값을 동시에**
+# 고정한다 — 어느 한쪽만 두면 "창을 넓히면 답이 바뀐다"는 사실 자체가 사라진다.
+EXPECTED_BEST_LAG_B = {S.CH_CASINO: 0, S.CH_ROOM: 0, S.CH_LOCAL: 0}
+EXPECTED_LAG_R_LOCAL_B = {0: 0.313, 1: 0.163}
+# 요일 통제 편상관도 창에 따라 갈린다. 31일 창에서는 카지노가 0.370(p 0.043)까지
+# 떨어져 룸서비스(0.558)에 순서를 내줬지만, 731일에서는 0.617 로 1위를 되찾고
+# 세 채널이 전부 p ≤ 0.001 이 된다. "절반 이상이 주말 효과"도 23% 감소로 줄어든다.
+EXPECTED_PARTIAL_B = {S.CH_CASINO: 0.617, S.CH_ROOM: 0.596, S.CH_LOCAL: 0.214}
+EXPECTED_RAW_B = {S.CH_CASINO: 0.801, S.CH_ROOM: 0.765, S.CH_LOCAL: 0.409}
+PERIOD_B_DAYS = 731
+
+
+@pytest.fixture(scope="module")
+def period_b(real_data):
+    """구간 B — 판매 전 기간이 ARS 와 조인되는 731일 창 (현재 기본 창)."""
+    ars = real_data["ars"]
+    sales = real_data["sales"]
+    ars_b = ars.loc[ars["date"].between(SALES_START, SALES_END)]
+    sales_b = sales.loc[sales["date"].between(SALES_START, SALES_END)]
+    if len(ars_b) < PERIOD_B_DAYS:
+        pytest.skip("구간 B 의 ARS 가 부족합니다")
+    return ars_b, sales_b
+
+
+def test_local_goods_lag_is_same_day_on_the_full_window(period_b, period_a):
+    """731일에서는 특산품도 D+0 이다 — D+1 은 31일 창의 산물이었다.
+
+    이 테스트가 깨진다는 것은 둘 중 하나다: 데이터가 또 바뀌었거나, 래그 계산이
+    바뀌었거나. 어느 쪽이든 발표 서사를 다시 확인해야 한다.
+    """
+    ars_b, sales_b = period_b
+    ars_a, sales_a = period_a
+
+    best_b = lag.best_lags(lag.lag_matrix(ars_b, sales_b, max_lag=3))
+    got_b = dict(zip(best_b["channel"], best_b["best_lag"]))
+    assert got_b == EXPECTED_BEST_LAG_B
+
+    row = lag.lag_matrix(ars_b, sales_b, max_lag=3)
+    local = row.loc[row["channel"] == S.CH_LOCAL].set_index("lag")["pearson"]
+    for k, expected in EXPECTED_LAG_R_LOCAL_B.items():
+        assert local.loc[k] == pytest.approx(expected, abs=TOL)
+    assert local.loc[0] > local.loc[1], "731일에서는 당일이 익일보다 강해야 한다"
+
+    # 같은 코드가 31일 창에서는 여전히 D+1 을 낸다 — 창의 차이임을 고정한다
+    best_a = lag.best_lags(lag.lag_matrix(ars_a, sales_a, max_lag=3))
+    got_a = dict(zip(best_a["channel"], best_a["best_lag"]))
+    assert got_a == EXPECTED_BEST_LAG, "31일 창의 D+1 이 사라졌다면 원인을 규명할 것"
+
+
+def test_all_channels_are_robust_on_the_full_window(period_b):
+    """731일 편상관 — 세 채널 전부 유의하고, 카지노가 1위를 되찾는다.
+
+    31일 창에서는 카지노가 p 0.043 으로 간신히 유의했고 특산품은 p 0.344 로
+    유의하지 않았다. 표본이 24배가 되자 셋 다 p ≤ 0.001 이 된다. 발표에서
+    "요일을 통제해도 견고하다"고 말할 수 있는 근거가 여기다.
+    """
+    ars_b, sales_b = period_b
+    table = stats.confound_table(ars_b, sales_b).set_index("channel")
+
+    for channel, expected in EXPECTED_PARTIAL_B.items():
+        row = table.loc[channel]
+        assert row["partial"] == pytest.approx(expected, abs=TOL)
+        assert row["raw"] == pytest.approx(EXPECTED_RAW_B[channel], abs=TOL)
+        assert row["p"] <= 0.001, f"{channel} 이 731일에서 유의하지 않다"
+
+    assert table.loc[S.CH_CASINO, "partial"] > table.loc[S.CH_ROOM, "partial"], (
+        "731일에서는 카지노 식음이 편상관 1위여야 한다 (31일 창에서는 역전됐다)"
+    )
+    # 원 상관의 절반이 아니라 4분의 1 가량만 요일로 설명된다
+    drop = 1 - table.loc[S.CH_CASINO, "partial"] / table.loc[S.CH_CASINO, "raw"]
+    assert 0.15 <= drop <= 0.30, f"요일 기여분이 {drop:.0%} — 서사와 어긋난다"
+
+
+def test_lift_is_stratified_within_month(period_b):
+    """고·저 유입일을 달 안에서 나누는지 — 유입 추세가 lift 를 오염시키지 않게.
+
+    전역 분위로 자르면 유입이 21.6% 감소한 2023→2024 추세 때문에 고유입일이
+    2023 에 몰린다. 그러면 2023 상반기에 단종된 상품이 lift 47.05 로 1위가 된다
+    (실측). 달 안에서 자르면 최댓값이 2.02 로 내려간다.
+    """
+    ars_b, sales_b = period_b
+    infl = inflow_mod.build_inflow(ars_b, sales_b)
+
+    hi, lo = inflow_mod.hi_lo_days_by_month(infl)
+    for days in (hi, lo):
+        years = pd.Series(sorted(days)).dt.year.value_counts()
+        share = years.max() / years.sum()
+        assert share < 0.65, f"고·저 유입일이 한 해에 쏠렸다: {years.to_dict()}"
+
+    lift = crosssell.compute_lift(sales_b, infl)["lift"].dropna()
+    assert lift.max() < MAX_PLAUSIBLE_LIFT

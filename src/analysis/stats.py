@@ -211,8 +211,10 @@ def _paired(x: pd.Series, y: pd.Series) -> tuple[np.ndarray, np.ndarray, np.ndar
 def partial_corr_dow(x: pd.Series, y: pd.Series) -> float:
     """요일을 통제한 편상관 — 잔차끼리의 피어슨 상관.
 
-    실측 (구간 A, recv_total 기준): 카지노 식음 0.370 / 룸서비스 0.558 /
-    지역특산품 0.176. **원 상관과 순서가 뒤집힌다**(0.801 > 0.740 → 0.558 > 0.370).
+    실측 (구간 B 731일, recv_total 기준): 카지노 식음 0.617 / 룸서비스 0.596 /
+    지역특산품 0.214 — 셋 다 p ≤ 0.001. 요일이 설명하는 몫은 약 23% 다.
+    ⚠ 구간 A(31일)에서는 0.370 / 0.558 / 0.176 이고 **순서가 뒤집힌다.**
+    좁은 창의 편상관은 CI 가 [0.129, 0.579] 로 넓어 순위를 논할 정밀도가 없다.
     """
     xv, yv, dow = _paired(x, y)
     if len(xv) < S.CONFOUND_MIN_DAYS:
@@ -304,8 +306,8 @@ def confound_table(ars: pd.DataFrame, sales: pd.DataFrame, *,
     메시지이므로, 정렬을 raw 로 되돌리지 말 것.
 
     실측 (구간 A, n=31):
-      카지노 식음 0.801 → 0.370 (p 0.044)  룸서비스 0.740 → 0.558 (p 0.002)
-      지역특산품 0.380 → 0.176 (p 0.357)
+      731일: 카지노 0.801 → 0.617  룸서비스 0.765 → 0.596  특산품 0.409 → 0.214
+      31일 : 카지노 0.801 → 0.370  룸서비스 0.740 → 0.558  특산품 0.380 → 0.176
     """
     cols = ["channel", "channel_label", "n_days", "raw", "partial", "delta",
             "ci_lo", "ci_hi", "p", "verdict", "metric", "metric_label"]

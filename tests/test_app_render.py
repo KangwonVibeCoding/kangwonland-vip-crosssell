@@ -140,12 +140,18 @@ def test_period_c_has_no_sales_data():
 
 
 def test_period_b_full_year():
-    """구간 B(2023~2024) — 요일 브릿지 경로."""
+    """구간 B(2023~2024, 731일) — 기본 창이자 ARS 실측 조인 경로.
+
+    2026-08-11 통합본 이전에는 판매만 있어 '요일 브릿지'(CAI 프록시) 배지가
+    떴다. 이제 ARS 가 731일 전부 붙으므로 '실측 조인' 이어야 한다 — 프록시
+    배지가 다시 뜨면 ARS 파일이 빠졌다는 뜻이다.
+    """
     at = _run(flt_period=S.PERIOD_B)
     assert not at.exception
     assert not [e.value for e in at.error]
     blob = " ".join(m.value for m in at.markdown)
-    assert "요일 브릿지" in blob
+    assert "실측 조인" in blob
+    assert "요일 브릿지" not in blob
 
 
 def test_toggles_do_not_break():

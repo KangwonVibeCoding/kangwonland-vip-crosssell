@@ -75,6 +75,11 @@ def compute_lift(sales: pd.DataFrame, inflow: pd.DataFrame,
     성립한다: **중앙값 규모 상품이 저유입일에 하나도 안 팔려도 lift ≤ 2.**
     관측이 두꺼운 상품일수록 alpha 의 영향은 자동으로 작아진다.
 
+    ⚠ 고·저 유입일은 **달 안에서** 나눈다(`hi_lo_days_by_month`). 전역 분위로
+    자르면 유입 추세가 고유입일을 특정 시기에 몰아넣어 lift 가 수명주기를 재게
+    된다 — 실측 731일 창에서 최댓값이 47.05(2023 상반기 단종 상품)에서 2.02 로
+    내려갔다. 자세한 근거는 그 함수의 docstring 에 있다.
+
     고/저 구간을 나눌 표본이 부족하면 lift=NaN 으로 두고 CSM 은 나머지 신호로만
     계산한다 (조용히 1.0 으로 채우면 없는 근거를 있는 것처럼 보이게 된다).
     반환 프레임의 `attrs` 에 게이트 값과 탈락 종수를 남긴다 — 화면에서 "몇 종을
@@ -84,7 +89,9 @@ def compute_lift(sales: pd.DataFrame, inflow: pd.DataFrame,
     if sales.empty:
         return pd.DataFrame(columns=cols)
 
-    hi, lo = inflow_mod.hi_lo_days(inflow, quantile)
+    # 달 안에서 고·저를 나눈다 — 전역 분위로 자르면 유입 추세가 있는 긴 창에서
+    # 고유입일이 특정 시기로 몰려 lift 가 상품 수명주기를 재게 된다
+    hi, lo = inflow_mod.hi_lo_days_by_month(inflow, quantile)
     if not hi or not lo:
         return pd.DataFrame(columns=cols)
 
