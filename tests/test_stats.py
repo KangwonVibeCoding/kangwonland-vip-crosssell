@@ -108,9 +108,10 @@ def period_a(real_data):
 
 @pytest.fixture(scope="module")
 def demo_frame():
-    """성별·연령 — **기간 집계**라 일자별 분해가 불가능하다.
+    """성별·연령 — 일자별로 오지만 보유분이 판매·구간 A 와 하루도 겹치지 않는다.
 
-    이 형태가 곧 VRB 가 유입의 상수배가 되는 원인이다(비율만 차용 → vip_ratio 상수).
+    그래서 일별 비율을 붙일 수 없고, 이것이 곧 VRB 가 유입의 상수배가 되는
+    원인이다(비율만 차용 → vip_ratio 상수).
     비율 자체는 corr(inflow, vrb) 에 영향이 없으므로 합성 표로 충분하다.
     """
     return pd.DataFrame({
@@ -734,7 +735,7 @@ def test_local_goods_sunday_spike_carries_the_d1_claim(period_a):
 
 # ── VTS 가 유입 지수의 복사본이 아닌지 ────────────────────────────────
 # 이 지수의 존재 이유는 "유입만 보면 이미 잘 파는 날을 또 공략한다"이다. 그런데
-# 성별·연령이 기간 집계로만 제공되어 vip_ratio 가 상수라서 VRB = tickets × 상수 가
+# 성별·연령을 일자별로 붙일 수 없어 vip_ratio 가 상수라서 VRB = tickets × 상수 가
 # 되고(실측 r=0.9988), base 축을 함께 쓰면 유입에 가중치를 두 번 주게 된다.
 # 그 상태의 실측이 corr(inflow, vts)=0.981 · 상위 10일 중 9일 동일이었다.
 EXPECTED_VRB_INFLOW_R = 0.9988      # base 축이 유입의 복사본이라는 증거
@@ -747,7 +748,7 @@ def test_vrb_is_a_constant_multiple_of_inflow(period_a, demo_frame):
     infl = inflow_mod.build_inflow(ars_a, sales_a)
     vrb = vip.compute_vrb(infl, demo_frame)
 
-    assert vrb["vip_ratio"].nunique() == 1, "기간 집계라 VIP 비율은 상수여야 한다"
+    assert vrb["vip_ratio"].nunique() == 1, "일자별로 못 붙이므로 VIP 비율은 상수여야 한다"
     r = stats.pearson(infl["inflow"], vrb["vrb"])
     assert r == pytest.approx(EXPECTED_VRB_INFLOW_R, abs=0.005)
     assert vip.base_is_redundant(infl["inflow"], vrb["vrb"])

@@ -209,10 +209,10 @@ def render(data: dict, sources: dict) -> FilterState:
                                  key="v_inflow")
             v_base = st.slider(
                 "VIP 모수", 0.0, 1.0, S.VTS_WEIGHTS["base"], 0.05, key="v_base",
-                help="성별·연령이 기간 집계로만 제공되어 VIP 비율이 상수인 동안 "
+                help="성별·연령을 일자별로 붙일 수 없어 VIP 비율이 상수인 동안 "
                      "이 축은 유입 축의 복사본입니다(r=0.999). 그래서 자동으로 "
-                     "빠지고, 이 슬라이더 값은 '미달 기회'로 넘어갑니다. 일자별 "
-                     "성별·연령 데이터가 들어오면 축이 복구됩니다.",
+                     "빠지고, 이 슬라이더 값은 '미달 기회'로 넘어갑니다. 판매 "
+                     "기간과 겹치는 성별·연령 데이터가 들어오면 축이 복구됩니다.",
             )
             v_proven = st.slider("실증 소비", 0.0, 1.0, S.VTS_WEIGHTS["proven"], 0.05,
                                  key="v_proven")

@@ -249,14 +249,16 @@ INFLOW_WEIGHTS_NO_PRESSURE = {
 }
 CAI_WEIGHTS = {"volume": 0.60, "breadth": 0.25, "dow": 0.15}
 VTS_WEIGHTS = {"inflow": 0.35, "base": 0.25, "proven": 0.20, "headroom": 0.20}
-# ⚠ base(VIP 모수) 축은 성별·연령이 **기간 집계**로만 제공되는 한 유입 축의 복사본이다.
+# ⚠ base(VIP 모수) 축은 성별·연령을 **일자별로 붙일 수 없는 한** 유입 축의 복사본이다.
+# (데이터는 일자별로 오지만 보유분 2026-06~08 이 판매·ARS 기간과 겹치지 않는다.)
 # vip_ratio 가 상수라서 VRB = tickets × 상수 이고, 실측 corr(inflow, vrb)=0.9988 이다.
 # 두 축을 함께 쓰면 유입에 0.60 을 준 것과 같아져 VTS 가 유입 지수의 재탕이 된다
 # (실측 corr(inflow, vts)=0.981 · 상위 10일 중 9일이 유입 상위일과 동일).
 # 그래서 중복이 감지되면 base 를 빼고 **그 가중치를 headroom 으로 넘긴다** —
 # 균등 분배가 아니라 headroom 인 이유는 이 지수의 존재 이유가 "이미 잘 파는 날"이
 # 아닌 날을 고르는 것이기 때문이다. 실측 corr(inflow, vts) 0.981 → 0.889.
-# 성별·연령 API 가 일자별 데이터를 주면 corr 이 떨어져 base 축이 자동으로 살아난다.
+# 판매 기간과 **겹치는** 일자별 성별·연령이 들어오면 corr 이 떨어져 base 축이
+# 자동으로 살아난다 — 일자별인 것만으로는 부족하고 겹쳐야 한다는 게 요점이다.
 VTS_BASE_REDUNDANT_R = 0.98   # |corr(inflow, vrb)| 이 이 값 이상이면 같은 신호로 본다
 VTS_WEIGHTS_NO_BASE = {
     **{k: v for k, v in VTS_WEIGHTS.items() if k != "base"},

@@ -15,10 +15,11 @@ from src.analysis import scoring, stats
 def vip_ratio(demo: pd.DataFrame,
               age_bands: tuple[str, ...] = S.AGE_BANDS_VIP,
               gender: str = "전체") -> float:
-    """전체 방문객 중 타겟 세그먼트 비중.
+    """전체 고객 중 타겟 세그먼트 비중.
 
-    데이터셋 2는 기간 집계이므로 **비율만 차용**하고 일별 규모는 ARS 에서 가져온다.
-    이 결합 규칙이 VRB 의 전제다.
+    데이터셋 2는 일자별로 오지만 보유 구간이 판매·ARS 와 겹치지 않고 `visitors`
+    (원본 `CUST_WHOL_CNT`)가 누적 고객 수라 규모로 쓸 수 없다. 그래서 **비율만
+    차용**하고 일별 규모는 ARS 에서 가져온다. 이 결합 규칙이 VRB 의 전제다.
     """
     if demo.empty or "visitors" not in demo.columns:
         return float("nan")
@@ -93,12 +94,12 @@ def base_is_redundant(inflow: pd.Series, vrb: pd.Series,
                       threshold: float = S.VTS_BASE_REDUNDANT_R) -> bool:
     """VRB 가 유입의 상수배인가 — 그렇다면 base 축은 inflow 축의 복사본이다.
 
-    성별·연령 데이터가 **기간 집계**로만 제공되어 `vip_ratio` 가 상수이므로
+    성별·연령을 **일자별로 붙일 수 없어** `vip_ratio` 가 상수이므로
     VRB = tickets × 상수 가 된다(실측 r=0.9988). ARS 가 없는 구간은 더 노골적이라
     scale 자체가 inflow × 계수다.
 
-    비율이 상수인지 직접 보지 않고 상관으로 판정하는 이유는, 성별·연령 API 가
-    **일자별 데이터를 주기 시작하면 이 함수가 저절로 False 를 돌려주며 base 축이
+    비율이 상수인지 직접 보지 않고 상관으로 판정하는 이유는, **판매 기간과 겹치는
+    일자별 성별·연령이 들어오면 이 함수가 저절로 False 를 돌려주며 base 축이
     복구되어야** 하기 때문이다. 분산이 없는(=순위 정보가 없는) 계열도 중복으로
     본다 — 상수 축은 가중치만 먹고 순위를 바꾸지 않는다.
     """
@@ -132,7 +133,7 @@ def compute_vts(inflow: pd.DataFrame, vrb: pd.DataFrame, sales: pd.DataFrame,
     마케팅 여지는 오히려 attach rate 가 낮은 날에 있다.
 
     ⚠ base 축은 VRB 가 유입의 상수배인 동안 **자동으로 빠진다**(`base_is_redundant`).
-    성별·연령이 기간 집계로만 제공되는 현재 데이터에서는 항상 그렇고, 그 상태로
+    성별·연령을 일자별로 붙일 수 없는 현재 데이터에서는 항상 그렇고, 그 상태로
     두 축을 다 쓰면 유입에 0.60 을 준 것과 같아져 지수가 유입의 재탕이 된다.
     어느 경로였는지는 결과의 `base_signal` 컬럼에 남는다 — CII 의 `pressure_signal`
     과 같은 규약이다. **없는 신호를 가중치로 채워 넣지 않는다.**

@@ -109,9 +109,9 @@ def fetch_one(name: str, spec: dict, out) -> bool:
         for msg in errors:
             out(f"   ! {msg}")
         out("   ✗ 응답을 받지 못했습니다.")
-        # 오류 코드마다 다음 행동이 완전히 다르다. 04 는 우리 쪽에서 고칠 것이
-        # 하나도 없는데(게이트웨이는 통과했고 제공기관 원본 서버가 죽은 것),
-        # 그걸 모르면 키·파라미터를 몇 시간 붙잡게 된다 — 실제로 그랬다.
+        # 오류 코드마다 다음 행동이 완전히 다르다. 특히 04 는 서버 장애와 필수
+        # 파라미터 누락을 구분하지 않아서, 서버 탓으로 넘겨짚으면 고칠 수 있는
+        # 것을 못 고친 채 며칠을 보낸다 — 실제로 그랬다(2026-08-04~08).
         for code, hint in ERROR_HINTS.items():
             if any(f"코드 {code}" in msg for msg in errors):
                 for line in hint:
