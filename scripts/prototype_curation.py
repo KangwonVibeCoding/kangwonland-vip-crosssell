@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -55,14 +56,24 @@ from src.data import loaders                            # noqa: E402
 #    (같은 이유로 VTS 의 base 축이 아직 복구되지 않는다 — CLAUDE.md 의 demo 절.)
 #    실측인 것은 `share`(구성비)뿐이고, 그것도 원본 `CUST_WHOL_CNT` 가 누적
 #    고객 수라 **규모가 아니라 비율로만** 쓸 수 있다.
+DEFAULT_PREF_CHANNELS = {S.CH_ROOM: 0.5, S.CH_LOCAL: 0.3, S.CH_CASINO: 0.2}
+DEFAULT_PREF_TIERS = (S.TIER_PREMIUM, S.TIER_BUNDLE)
+
+# 세그먼트는 12개(성별 2 × 연령 6)를 다 만든다. 채널 선호는 위 공통 가정을 쓰고,
+# **세그먼트를 실제로 갈라놓는 것은 상품 단위 선호(`segment_preference.csv`)** 다.
+# ID 의 `-ROOM` 접미는 "룸서비스 우위 채널선호 프로필"을 뜻한다 — 그 프로필이
+# 가정이라는 사실을 이름에 남긴다.
 PERSONAS: dict[str, dict] = {
-    "SEG-F50-ROOM": {
-        "label": "50대 여성 · 룸서비스 선호",
-        "gender": "여",
-        "age_band": "50대",
-        "pref_channels": {S.CH_ROOM: 0.5, S.CH_LOCAL: 0.3, S.CH_CASINO: 0.2},
-        "pref_tiers": (S.TIER_PREMIUM, S.TIER_BUNDLE),
-    },
+    f"SEG-{code}{age[:2]}-ROOM": {
+        "label": f"{age} {gender_kr}성",
+        "gender": gender_kr,
+        "age_band": age,
+        "segment_group": f"{age} {gender_kr}",   # segment_preference.csv 의 `그룹` 값
+        "pref_channels": DEFAULT_PREF_CHANNELS,
+        "pref_tiers": DEFAULT_PREF_TIERS,
+    }
+    for code, gender_kr in (("F", "여"), ("M", "남"))
+    for age in ("20대", "30대", "40대", "50대", "60대", "70대")
 }
 
 # ── 스코어 상수 ───────────────────────────────────────────────────────
@@ -85,6 +96,42 @@ STOCK_MIN_RATIO = 0.25     # 판매일수/창일수 — 재고 프록시
 TIER_BAND = 1              # 선호 티어에서 몇 칸까지 허용할지
 SUB_POOL_TOP_N = 8         # 2순위는 이 순위 안에서만 고른다
 COOC_MIN_DAYS = 3          # crosssell.cooccurrence 가 표본으로 인정하는 최소 공통일
+
+# ── 세그먼트 선호 (외부 추정표) ───────────────────────────────────────
+# `data/raw/segment_preference.csv` — 하이원멤버스 **누적** 가입현황의 성별·연령
+# 구성비 변화와 품목별 판매 비중 변화의 상관(r)으로 추정한 표. 없으면 이 축은
+# 통째로 빠지고 나머지 축으로만 점수를 낸다(파일·네트워크 의존 0).
+#
+# ⚠ 이 r 은 `[실측]` 이 아니라 `[파생]` 이다. 두 가지 한계가 값에 박혀 있다:
+#   1. **생태학적 추론이다.** 개인 구매 기록이 아니라 집단 비율끼리의 상관이라
+#      "50대가 이걸 샀다"가 아니라 "50대 비중이 높은 시기에 이게 더 팔렸다"이다.
+#   2. **원 지표가 누적 수치다.** 누적 구성비는 단조 변화라 사실상 시간의
+#      대리변수이고, 그래서 r 은 연령 선호와 **상품의 시간 추세를 분리하지 못한다.**
+#      (`demographics_api` 의 `CUST_WHOL_CNT` 를 방문객으로 오독한 전례와 같은 성질.)
+#
+# 그래서 판매 커버리지 게이트를 건다. 창의 대부분에서 팔리지 않은 상품은 r 을
+# 쓰지 않는다 — 창 중간에 생기거나 사라진 상품은 상관이 선호가 아니라 **존재한
+# 시기**를 재기 때문이다. 실측: 룸서비스 `(컨)` 상품군이 2023-07 에 통째로 등장해
+# (2023-01~06 판매 0) 40~70대 선호 목록의 60~80%를 차지한다. 20~30대 목록에는
+# 0%다. 같은 실패 모드로 `lift` 가 상품 수명주기를 재던 것을 `hi_lo_days_by_month`
+# 로 고친 전례가 있다(최댓값 47.05 → 2.02).
+# 게이트를 통과 못 한 상품은 가산도 감점도 없다(중립) — 없는 근거를 만들지 않는다.
+# 로더의 계층 폴백과 같은 순서다 — raw(원천) → sample(커밋본). `data/raw` 는
+# gitignore 되므로, 배포판에서도 쓰려면 축약본을 `data/sample` 에 넣어야 한다.
+SEGMENT_PREF_FILES = (S.RAW_DIR / "segment_preference.csv",
+                      S.SAMPLE_DIR / "segment_preference.csv")
+SEGMENT_STRENGTH = 0.5          # base 축 배수 = 1 + 이 값 × r  (r=+0.86 → ×1.43)
+SEGMENT_MIN_MONTH_RATIO = 0.9   # 창의 이 비율 이상 '월'에서 팔린 상품만 r 을 쓴다
+SEGMENT_CHANNEL_KR = {"룸서비스": S.CH_ROOM, "특산품": S.CH_LOCAL}
+
+# ⚠ 이 표를 **2023-07 이후 18개월 재계산본으로 간주한다** — 데이터 제공자의 지시다.
+# 파일 자체는 2023-01~2024-12(24개월) 산출이라 `(컨)` 상품군이 없던 6개월이 섞여
+# 있는데, 그 6개월을 뺀 값이라고 보고 쓰는 것이다. **실제로 재계산된 값은 아니다.**
+# 커버리지 게이트도 반드시 같은 창에서 재야 앞뒤가 맞는다 — 24개월 창으로 재면
+# 2023-07 에 개시한 상품(`(VIP) F1`·`(컨)` 전부)이 18/24 로 전부 탈락해, 간주하기로
+# 한 전제와 게이트가 서로 모순된다.
+# 이 간주가 값에 미치는 영향은 `internal_reason` 에 그대로 적힌다.
+SEGMENT_ASSUMED_WINDOW = (pd.Timestamp("2023-07-01"), pd.Timestamp("2024-12-31"))
 
 # 3순위(티어 밴드 면제 슬롯)의 마진 프록시 하한 — 후보 풀 분위로 잡는다.
 # 밴드를 면제하면 범용 대량 상품이 이긴다: 매일 대량으로 팔리는 상품은 총유입과
@@ -172,6 +219,84 @@ def season_factors(sales: pd.DataFrame, item_ids: pd.Series,
                      "season": min(max(d * m, SEASON_FACTOR_CLIP[0]),
                                    SEASON_FACTOR_CLIP[1])})
     return pd.DataFrame(rows, columns=cols)
+
+
+def load_segment_preference() -> pd.DataFrame:
+    """세그먼트 선호 추정표를 읽는다. 없으면 **빈 프레임** — 축이 통째로 빠진다.
+
+    반환: group / channel / item / r  (선호는 r>0, 비선호는 r<0 로 한 열에 합친다)
+
+    비선호를 버리지 않는 이유: 구성비 합이 1로 묶여 있어 비선호는 선호의 거울상
+    이지만, **추천을 실제로 바꾸는 쪽이 비선호다.** 실측 예 — `(VIP) F1` 은
+    20대 선호 1위(r=+0.71)이면서 50대 여 비선호(r=-0.56)인데, 선호만 쓰면 50대
+    여에게 가산점이 0일 뿐이라 CSM 70.6·프리미엄·채널선호 0.5 로 여전히 1순위를
+    지킨다. 즉 20대 취향 상품이 50대에게 계속 추천된다.
+    """
+    cols = ["group", "channel", "item", "r"]
+    path = next((p for p in SEGMENT_PREF_FILES if p.exists()), None)
+    if path is None:
+        return pd.DataFrame(columns=cols)
+    try:
+        raw = pd.read_csv(path, encoding="utf-8-sig")
+    except Exception:  # noqa: BLE001  읽기 실패는 축 부재와 같게 다룬다
+        return pd.DataFrame(columns=cols)
+
+    rows: list[dict] = []
+    for rec in raw.itertuples(index=False):
+        channel = SEGMENT_CHANNEL_KR.get(str(rec[0]).strip())
+        if channel is None:
+            continue
+        for col in (2, 3):                      # 선호 / 비선호 열
+            if col >= len(rec):
+                continue
+            for m in re.finditer(r"([^;]+?)\(r=(-?\d+(?:\.\d+)?)\)", str(rec[col])):
+                rows.append({"group": str(rec[1]).strip(), "channel": channel,
+                             "item": m.group(1).strip().strip(",").strip(),
+                             "r": float(m.group(2))})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def segment_affinity(pref: pd.DataFrame, sales: pd.DataFrame,
+                     persona: dict) -> pd.DataFrame:
+    """페르소나 그룹의 상품별 선호 r → item_id 단위로 붙인다 + 커버리지 게이트.
+
+    게이트: 상품이 창의 `SEGMENT_MIN_MONTH_RATIO` 이상 '월'에서 팔렸어야 r 을 쓴다.
+    창 중간에 생기거나 사라진 상품은 24개월 상관이 선호가 아니라 **존재한 시기**를
+    재기 때문이다(상단 상수 주석의 `(컨)` 사례). 절대 개월수가 아니라 비율인 이유는
+    `sample_gate` 와 같다 — 창이 바뀌어도 의미가 유지된다.
+    """
+    cols = ["item_id", "seg_r", "seg_months", "seg_used", "seg_item"]
+    group = persona.get("segment_group")
+    if pref.empty or not group or sales.empty:
+        return pd.DataFrame(columns=cols)
+
+    sel = pref.loc[pref["group"] == group]
+    if sel.empty:
+        return pd.DataFrame(columns=cols)
+
+    # 커버리지는 `SEGMENT_ASSUMED_WINDOW` 안에서 잰다 — 위 상수 주석 참고.
+    lo, hi = SEGMENT_ASSUMED_WINDOW
+    win = sales.loc[sales["date"].between(lo, hi)]
+    if win.empty:
+        win = sales
+    months = win.groupby("item_id")["date"].agg(lambda s: s.dt.to_period("M").nunique())
+    window_months = int(win["date"].dt.to_period("M").nunique())
+    floor = window_months * SEGMENT_MIN_MONTH_RATIO
+
+    # 상품명 → item_id. 같은 이름이 여러 id 로 존재할 수 있어 전부 붙인다.
+    lookup = sales[["item_id", "item", "channel"]].drop_duplicates()
+    joined = sel.merge(lookup, on=["item", "channel"], how="inner")
+    if joined.empty:
+        return pd.DataFrame(columns=cols)
+
+    joined = joined.assign(seg_months=joined["item_id"].map(months).fillna(0).astype(int))
+    joined = joined.assign(seg_used=joined["seg_months"] >= floor)
+    # 같은 item_id 에 여러 행이 붙으면 절대값이 큰 r 을 남긴다 (신호가 센 쪽)
+    joined = (joined.assign(_abs=joined["r"].abs())
+              .sort_values(["_abs"], ascending=False)
+              .drop_duplicates("item_id"))
+    return joined.rename(columns={"r": "seg_r", "item": "seg_item"})[cols] \
+        .reset_index(drop=True)
 
 
 def channel_signals(ars: pd.DataFrame, sales: pd.DataFrame,
@@ -299,14 +424,17 @@ def build_candidates(csm: pd.DataFrame, sales: pd.DataFrame,
 
 def score_candidates(pool: pd.DataFrame, ch_sig: dict[str, dict],
                      item_sig: pd.DataFrame, season: pd.DataFrame,
-                     persona: dict) -> pd.DataFrame:
+                     seg: pd.DataFrame, persona: dict) -> pd.DataFrame:
     """cur_score = wsum({intent .50, base .30, csm .20}).
 
     `wsum` 은 0~1 축을 기대하므로 CSM(0~100)은 `nrm` 으로 후보 풀 안에서 다시
     정규화한다 — 이 프로젝트의 다른 지수(CII·VTS·CSM)가 축을 넣는 방식과 같다.
     """
     df = pool.merge(item_sig, on="item_id", how="left") \
-             .merge(season, on="item_id", how="left")
+             .merge(season, on="item_id", how="left") \
+             .merge(seg if not seg.empty else pd.DataFrame(
+                 columns=["item_id", "seg_r", "seg_months", "seg_used", "seg_item"]),
+                 on="item_id", how="left")
 
     ch_signal = df["channel"].map(lambda c: ch_sig.get(c, {}).get("signal", 0.0))
     ch_signal = pd.to_numeric(ch_signal, errors="coerce").fillna(0.0)
@@ -326,9 +454,21 @@ def score_candidates(pool: pd.DataFrame, ch_sig: dict[str, dict],
 
     pref_ch = persona["pref_channels"]
     top_tier = persona["pref_tiers"][0]
-    base = df["channel"].map(pref_ch).fillna(0.0).astype("float64") * (
+    base_channel = df["channel"].map(pref_ch).fillna(0.0).astype("float64") * (
         df["tier"].eq(top_tier).map({True: 1.0, False: 0.75})
     )
+
+    # 세그먼트 선호를 base 축의 **배수**로 싣는다. 축을 따로 세우지 않는 이유는
+    # 측정된 34종만 새 축을 받아 나머지 1,650여 종보다 구조적으로 유리해지기
+    # 때문이다 — CSM 의 `CSM_ELASTICITY_FILL_QUANTILE` 주석과 같은 함정이다
+    # ("표본 부족"이 점수 보너스가 된다). 배수로 두면 미측정 상품의 배수가 1.0,
+    # 즉 **중립**이라 가산도 감점도 없다. `season` 을 상품 신호에 싣는 방식과 같다.
+    seg_r = pd.to_numeric(df.get("seg_r"), errors="coerce")
+    seg_used = df.get("seg_used")
+    seg_used = (seg_used.fillna(False).astype(bool) if seg_used is not None
+                else pd.Series(False, index=df.index))
+    seg_mult = (1.0 + SEGMENT_STRENGTH * seg_r.where(seg_used, 0.0)).fillna(1.0)
+    base = base_channel * seg_mult
 
     cur = scoring.wsum(
         {"intent": intent, "base": base, "csm": scoring.nrm(df["csm"])},
@@ -343,6 +483,11 @@ def score_candidates(pool: pd.DataFrame, ch_sig: dict[str, dict],
         month_idx=pd.to_numeric(df.get("month_idx"), errors="coerce").fillna(1.0).to_numpy(),
         intent=intent.to_numpy(),
         base=base.to_numpy(),
+        base_channel=base_channel.to_numpy(),
+        seg_mult=seg_mult.to_numpy(),
+        seg_r=seg_r.to_numpy(),
+        seg_used=seg_used.to_numpy(dtype=bool),
+        seg_months=pd.to_numeric(df.get("seg_months"), errors="coerce").to_numpy(),
         cur_score=cur.to_numpy(),
     ).sort_values(
         # 동점을 item_id 로 확정한다. 같은 값이 여러 개 있을 때 정렬 순서에
@@ -418,6 +563,30 @@ def source_label(row: pd.Series) -> str:
     return "실측" if bool(row["lift_measured"]) else "파생"
 
 
+def segment_note(row: pd.Series, persona: dict) -> str:
+    """세그먼트 선호 축의 근거 문자열.
+
+    `[실측]` 이 아니라 `[파생]` 이다 — 개인 구매 기록이 아니라 집단 구성비끼리의
+    상관이고, 원 지표가 누적이라 시간 추세와 분리되지 않는다. 그 한계를 문자열에
+    그대로 적는다. 화면이 근거보다 세게 말하면 안 된다.
+    """
+    group = persona.get("segment_group", "?")
+    r = row.get("seg_r")
+    if r is None or pd.isna(r):
+        return (f"[파생] 세그먼트({group}) 선호 추정표에 없는 상품 → 배수 1.00(중립)")
+    months = row.get("seg_months")
+    months_txt = "" if pd.isna(months) else f" · 판매월 {int(months)}"
+    if not bool(row.get("seg_used", False)):
+        return (f"[파생] 세그먼트({group}) r {float(r):+.2f} 이나 판매 커버리지 미달"
+                f"{months_txt} → 시기 아티팩트 위험으로 미적용(배수 1.00)")
+    kind = "선호" if float(r) > 0 else "비선호"
+    lo, hi = SEGMENT_ASSUMED_WINDOW
+    return (f"[파생] 세그먼트({group}) {kind} r {float(r):+.2f}"
+            f" → base 배수 {float(row.get('seg_mult', 1.0)):.2f}{months_txt}"
+            f" · 회원 누적 구성비 기반 추정이라 시간 추세와 분리되지 않음"
+            f" · [가정] {lo:%Y-%m}~{hi:%Y-%m} 재계산본으로 간주(원파일은 24개월 산출)")
+
+
 def internal_reason(row: pd.Series, ch_sig: dict, persona: dict,
                     grade: str, extra: str = "") -> str:
     """운영자용 근거 문자열. 모든 수치에 [실측]/[파생]/[가정] 라벨을 단다."""
@@ -452,6 +621,7 @@ def internal_reason(row: pd.Series, ch_sig: dict, persona: dict,
         f" · 누적 {int(row['total_qty']):,}개)",
         f"[가정] 페르소나 채널선호 {persona['pref_channels'].get(ch, 0):.2f}"
         f" — demo(2026-06~08)와 sales(2023~2024) 겹침 0일이라 실측 불가",
+        segment_note(row, persona),
         f"[파생] cur_score {float(row['cur_score']):.1f}"
         f" (intent {float(row['intent']):.3f} / base {float(row['base']):.3f})",
     ]
@@ -520,6 +690,30 @@ def intent_summary(as_of: pd.Timestamp, day: pd.Series, persona: dict,
 
 # ── 출력 ──────────────────────────────────────────────────────────────
 
+def print_segment(pref: pd.DataFrame, seg: pd.DataFrame, persona: dict) -> None:
+    """세그먼트 축이 실제로 무엇을 들고 왔는지 — 게이트 탈락분까지 드러낸다."""
+    group = persona.get("segment_group", "?")
+    if pref.empty:
+        print(f"[세그먼트 선호] 표 없음 → 이 축은 비활성 (배수 전부 1.00)")
+        return
+    lo, hi = SEGMENT_ASSUMED_WINDOW
+    print(f"[세그먼트 선호 · {group}]  출처 data/raw/segment_preference.csv "
+          f"— [파생] 회원 누적 구성비 기반 추정")
+    print(f"  ⚠ [가정] {lo:%Y-%m}~{hi:%Y-%m} 재계산본으로 간주 "
+          f"(원파일은 24개월 산출) · 커버리지도 같은 창에서 측정")
+    if seg.empty:
+        print("  해당 그룹 매칭 0종 → 축 비활성")
+        print()
+        return
+    for r in seg.sort_values("seg_r", ascending=False).itertuples():
+        mark = "적용" if r.seg_used else "미적용(커버리지)"
+        print(f"  {str(r.seg_item)[:30]:<32} r {r.seg_r:+.2f}"
+              f" · 판매월 {int(r.seg_months):>2}  → {mark}")
+    used = int(seg["seg_used"].sum())
+    print(f"  적용 {used}종 / 표 매칭 {len(seg)}종")
+    print()
+
+
 def print_report(funnel, scored, gate, ch_sig, persona, as_of, day) -> None:
     line = "─" * 78
     print(line)
@@ -551,16 +745,16 @@ def print_report(funnel, scored, gate, ch_sig, persona, as_of, day) -> None:
     def table(title: str, frame: pd.DataFrame) -> None:
         print(title)
         print(f"  {'#':<3}{'상품':<24}{'채널':<10}{'티어':<8}"
-              f"{'cur':>7}{'intent':>8}{'요일':>6}{'월':>6}{'계절':>6}"
-              f"{'base':>7}{'CSM':>7}  {'lift':<10}밴드")
+              f"{'cur':>7}{'intent':>8}{'계절':>6}"
+              f"{'base':>7}{'세그':>6}{'CSM':>7}  {'lift':<10}밴드")
         for i, r in enumerate(frame.itertuples(), 1):
             lift = (f"{r.lift:.2f}" if bool(r.lift_measured) and pd.notna(r.lift)
                     else "NaN(미달)")
             print(f"  {i:<3}{str(r.item)[:22]:<24}{S.CHANNEL_LABEL[r.channel]:<10}"
                   f"{S.TIER_LABEL.get(r.tier, r.tier):<8}"
                   f"{r.cur_score:>7.1f}{r.intent:>8.3f}"
-                  f"{r.dow_idx:>6.2f}{r.month_idx:>6.2f}{r.season:>6.2f}"
-                  f"{r.base:>7.3f}{r.csm:>7.1f}  "
+                  f"{r.season:>6.2f}"
+                  f"{r.base:>7.3f}{r.seg_mult:>6.2f}{r.csm:>7.1f}  "
                   f"{lift:<10}{'O' if r.in_band else '-'}")
         print()
 
@@ -595,8 +789,11 @@ def build_payload(persona_id: str, as_of: pd.Timestamp, verbose: bool = True) ->
 
     ch_sig = channel_signals(ars, sales, inflow, grade)
     pool, funnel = build_candidates(csm, sales, as_of, persona, grade)
+    seg_pref = load_segment_preference()
+    seg = segment_affinity(seg_pref, sales, persona)
     scored = score_candidates(pool, ch_sig, item_signals(inflow, sales),
-                              season_factors(sales, pool["item_id"], as_of), persona)
+                              season_factors(sales, pool["item_id"], as_of),
+                              seg, persona)
     slots = pick_slots(scored)
     if not slots:
         raise SystemExit("후보가 모두 탈락했다 — 필터 상수를 확인할 것.")
@@ -608,6 +805,7 @@ def build_payload(persona_id: str, as_of: pd.Timestamp, verbose: bool = True) ->
 
     if verbose:
         print(f"데이터 출처: {sources}")
+        print_segment(seg_pref, seg, persona)
         print_report(funnel, scored, gate, ch_sig, persona, as_of, day)
 
     main_id = str(slots[0][1]["item_id"])
