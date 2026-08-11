@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from config import settings as S
@@ -39,8 +41,9 @@ def test_no_tab_render_errors(app):
     assert not errors, f"탭 렌더 오류: {errors}"
 
 
-def test_four_tabs_present(app):
-    assert len(app.tabs) == 4, f"탭 4개가 아님: {len(app.tabs)}"
+def test_all_tabs_present(app):
+    """탭 5개 — 2026-08-11 에 'AI VIP 큐레이션'이 붙었다."""
+    assert len(app.tabs) == 5, f"탭 5개가 아님: {len(app.tabs)}"
 
 
 def test_title_and_kpis_rendered(app):
@@ -69,16 +72,23 @@ def test_headline_correlation_is_real(app):
 def test_headline_shows_confound_controlled_value(app):
     """배너가 원 상관만 팔지 않는지 — 요일 통제 후 값이 같은 줄에 있어야 한다.
 
-    r=0.80 의 절반 이상은 주말 효과다. 배너에서 0.80 만 보고 스크롤하지 않은
-    사람이 반쪽짜리 근거를 가져가지 않도록, 통제 후 값(0.56)을 같이 띄운다.
+    배너에서 0.80 만 보고 스크롤하지 않은 사람이 반쪽짜리 근거를 가져가지 않도록,
+    통제 후 값을 같은 줄에 띄운다.
+
+    ⚠ 기대값은 **기본 창(구간 B · 731일)** 의 값이다. 2026-08-11 에 사이드바가
+    `DEFAULT_PERIOD` 를 무시하고 index=0(구간 A · 31일 창)을 고르던 버그를 고치면서
+    바뀌었다 — 31일 창에서는 0.801→0.370, 룸서비스가 편상관 1위(0.558)라 이 테스트가
+    그 값으로 통과하고 있었다. 두 창이 다른 답을 낸다는 사실 자체가 회귀 대상이므로
+    **어느 창의 값인지 확인하지 않고 기대값만 고치지 말 것.**
     """
     blob = " ".join(m.value for m in app.markdown)
     if "데이터가 겹치지 않습니다" in blob:
         pytest.skip("기본 구간에 조인 가능한 데이터가 없음")
-    assert "요일을 통제하면 0.56" in blob, "배너에 요일 통제 후 상관이 없습니다"
+    assert "요일을 통제하면 0.62" in blob, "배너에 요일 통제 후 상관이 없습니다"
     assert "요일 교란 통제" in blob, "요일 교란 통제 절이 렌더되지 않았습니다"
-    # 편상관 1위(룸서비스)가 배너 칩 맨 앞 = 통제 후 우선순위가 화면에 드러난다
-    assert "0.740 → 0.558" in blob, "채널별 원 상관 → 편상관 병기가 없습니다"
+    # 편상관 1위(731일 창에서는 카지노 식음)가 배너 칩 맨 앞 = 통제 후 우선순위가
+    # 화면에 드러난다. 31일 창에서는 룸서비스(0.740 → 0.558)가 1위였다.
+    assert "0.801 → 0.617" in blob, "채널별 원 상관 → 편상관 병기가 없습니다"
 
 
 def test_sidebar_widgets_have_defaults(app):
@@ -127,16 +137,19 @@ def test_single_channel_keeps_entity_colors():
     assert not [e.value for e in at.error]
 
 
-def test_period_c_has_no_sales_data():
-    """구간 C(2026 상반기)는 판매 데이터가 없다 → 안내로 graceful 처리.
+def test_sales_free_range_is_handled_gracefully():
+    """판매가 없는 범위를 직접 지정해도 안내로 graceful 처리.
 
-    이 구간은 ARS 전처리본에 총 접수자 컬럼도 없어 CII 가 2축으로 폴백한다.
-    지수 계산 경로가 통째로 달라지므로 렌더까지 확인해야 한다.
+    구간 C(2025~2026 상반기)는 2026-08-11 에 제거했다 — 그 구간 판매 데이터를
+    확보할 수 없어 탭 2·3·4·5 가 늘 안내 화면이었고 심사자가 고장으로 읽었다.
+    다만 '직접 지정'으로는 여전히 판매 없는 범위를 고를 수 있으므로, 그 경로가
+    빈 화면이 아니라 안내로 끝나는지는 계속 고정한다.
     """
-    at = _run(flt_period=S.PERIOD_C)
+    at = _run(flt_period=S.PERIOD_CUSTOM,
+              flt_dates=(dt.date(2025, 1, 1), dt.date(2025, 3, 31)))
     assert not at.exception
     assert not [e.value for e in at.error]
-    assert at.info, "판매 데이터 부재 안내가 없습니다"
+    assert at.info or at.warning, "판매 데이터 부재 안내가 없습니다"
 
 
 def test_period_b_full_year():

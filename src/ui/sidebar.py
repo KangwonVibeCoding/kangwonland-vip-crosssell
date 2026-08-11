@@ -103,8 +103,14 @@ def render(data: dict, sources: dict) -> FilterState:
         labels = {k: S.PERIODS[k]["label"] for k in options}
         labels[S.PERIOD_CUSTOM] = "직접 지정"
         choices = options + [S.PERIOD_CUSTOM]
+        # 기본 선택은 `S.DEFAULT_PERIOD` 를 따른다. index=0 으로 박아두면 딕셔너리
+        # 순서상 항상 구간 A(31일 창)가 잡히는데, 그 창은 표본 부족으로 다른 답을
+        # 내는 지표가 있어(특산품 래그 D+1 vs D+0, 편상관 채널 순서) 첫 화면이
+        # 철회된 서사를 헤드라인으로 띄우게 된다.
+        default_idx = choices.index(S.DEFAULT_PERIOD) \
+            if S.DEFAULT_PERIOD in choices else 0
         period = st.radio(
-            "구간", choices, index=0, format_func=lambda k: labels[k],
+            "구간", choices, index=default_idx, format_func=lambda k: labels[k],
             label_visibility="collapsed", key="flt_period",
         )
 

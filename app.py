@@ -16,7 +16,7 @@ from config import settings as S
 from src.data import api_client, loaders
 from src.ui import components as C
 from src.ui import sidebar, theme
-from src.views import fnb_engine, local_curation, overview, timing
+from src.views import curation, fnb_engine, local_curation, overview, timing
 
 # ── 1. 페이지 설정 (반드시 최초 st.* 호출) ──────────────────────────────
 st.set_page_config(
@@ -109,9 +109,11 @@ tabs = st.tabs([
     "🍽️ 고마진 F&B 매칭 엔진",
     "⏱️ 유입-소비 시차 엔진",
     "🎁 프리미엄 로컬 큐레이션",
+    "🧭 AI VIP 큐레이션",
 ])
 
-for tab, view in zip(tabs, (overview, fnb_engine, timing, local_curation)):
+for tab, view in zip(tabs,
+                     (overview, fnb_engine, timing, local_curation, curation)):
     with tab:
         try:
             view.render(ctx)

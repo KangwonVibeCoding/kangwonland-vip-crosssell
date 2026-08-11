@@ -23,12 +23,11 @@ def render(ctx: dict) -> None:
 
     if sales.empty:
         # 구간명은 settings 에서 가져온다 — 문구에 박아두면 구간 정의가 바뀔 때 어긋난다
-        pc = S.PERIODS[S.PERIOD_C]
+        names = " / ".join(f"'{m['label']}'" for m in S.PERIODS.values())
         C.empty_state(
             "선택한 구간·필터에 판매 데이터가 없습니다.",
-            f"'{pc['badge']} · {pc['start']:%Y-%m}~{pc['end']:%m}' 구간에는 판매 "
-            "데이터가 존재하지 않습니다. '정밀 검증' 또는 '연간 확장' 구간을 "
-            "선택해 주세요.",
+            f"판매 데이터는 2023-01 ~ 2024-12 에만 존재합니다. {names} 중 하나를 "
+            "고르거나, '직접 지정' 범위를 그 안으로 좁혀 주세요.",
         )
         return
 

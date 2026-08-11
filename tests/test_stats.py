@@ -537,10 +537,13 @@ def test_cai_can_substitute_cii(period_a):
     assert v["pearson"] > 0.6, f"CAI 대체 타당성 부족: r={v['pearson']:.3f}"
 
 
-# ── 구간 C: recv_total 없는 ARS 에서의 CII 폴백 ────────────────────────
+# ── 2026 ARS: recv_total 없는 ARS 에서의 CII 폴백 ──────────────────────
+# UI 의 구간 C(2025~2026 상반기)는 2026-08-11 에 제거했다(그 구간 판매 데이터를
+# 확보할 수 없어 탭 대부분이 늘 안내 화면이었다). **ARS 원본은 그대로 있고**
+# 총접수자 없는 파일이 또 들어올 수 있으므로 폴백 경로는 계속 고정한다.
 @pytest.fixture(scope="module")
 def period_c(real_data):
-    """구간 C(2026 상반기) — ARS 만 있고 총접수자 컬럼이 없는 구간."""
+    """2026 상반기 ARS — 총접수자 컬럼이 없을 수 있는 구간."""
     ars = real_data["ars"]
     ars_c = ars.loc[ars["date"].dt.year == 2026]
     if len(ars_c) < 20:
